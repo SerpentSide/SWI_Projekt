@@ -149,13 +149,19 @@ export function SeatMapModal({ title, subtitle, screeningSeed, onClose }: SeatMa
           })}
         </div>
 
-        {invalidRows.size > 0 && (
-          <p className="mt-3 text-sm text-destructive">
-            Tento výběr by nechal osamocené volné sedadlo v řadě{' '}
-            {Array.from(invalidRows).sort((a, b) => a - b).join(', ')} - uprav výběr, než
-            budeš moct rezervovat.
-          </p>
-        )}
+        {/* Always mounted at a fixed height, just hidden when there's nothing to say -
+            otherwise the message appearing/disappearing resizes the modal and it
+            jumps around (it's centered on screen). */}
+        <p
+          className={cn(
+            'mt-3 min-h-10 text-sm text-destructive',
+            invalidRows.size === 0 && 'invisible',
+          )}
+        >
+          Tento výběr by nechal osamocené volné sedadlo v řadě{' '}
+          {Array.from(invalidRows).sort((a, b) => a - b).join(', ')} - uprav výběr, než budeš
+          moct rezervovat.
+        </p>
 
         <button
           type="button"
