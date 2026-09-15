@@ -50,11 +50,10 @@ export function HomePage() {
   }, [selectedMovieId, year, month])
 
   return (
-    <div className="mx-auto flex h-full max-w-3xl flex-col">
-      {/* Fixed - sits outside the scrolling area below, so it never moves.
-          Width is capped so the day cells (aspect-square) don't blow up into
-          giant squares on wide screens. */}
-      <div className="mb-4 max-w-xs shrink-0">
+    <div className="flex h-full gap-6">
+      {/* Fixed left column: calendar, then a featured poster below it. Neither
+          scrolls or moves - only the list on the right does. */}
+      <div className="flex w-64 shrink-0 flex-col gap-4">
         <MonthCalendar
           year={year}
           month={month}
@@ -62,10 +61,14 @@ export function HomePage() {
           onNextMonth={goToNextMonth}
           highlightedDays={highlightedDays}
         />
+        {/* TODO: rotate through featured posters on an interval once there's real data. */}
+        <div className="flex aspect-[2/3] items-center justify-center rounded-DEFAULT border border-dashed border-muted-foreground/40 text-sm text-muted-foreground">
+          plakát
+        </div>
       </div>
 
-      {/* The only part of this page that scrolls. */}
-      <div className="flex-1 overflow-y-auto">
+      {/* Full height, scrollable, scrollbar hidden. */}
+      <div className="scrollbar-hide flex-1 overflow-y-auto">
         <MovieList
           movies={MOCK_MOVIES}
           selectedMovieId={selectedMovieId}
