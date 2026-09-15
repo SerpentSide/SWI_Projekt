@@ -50,34 +50,28 @@ export function HomePage() {
   }, [selectedMovieId, year, month])
 
   return (
-    <div className="mx-auto max-w-3xl">
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold">Přehled promítání</h1>
-        <p className="text-muted-foreground">
-          Zatím placeholder — dny promítání se dopočítávají z ukázkových filmů, až bude
-          API, nahradí se reálnými promítáními.
-        </p>
+    <div className="mx-auto flex h-full max-w-3xl flex-col">
+      {/* Fixed - sits outside the scrolling area below, so it never moves.
+          Width is capped so the day cells (aspect-square) don't blow up into
+          giant squares on wide screens. */}
+      <div className="mb-4 max-w-xs shrink-0">
+        <MonthCalendar
+          year={year}
+          month={month}
+          onPrevMonth={goToPrevMonth}
+          onNextMonth={goToNextMonth}
+          highlightedDays={highlightedDays}
+        />
       </div>
 
-      {/* Stays on screen while the movie list below scrolls. Width is capped so the
-          day cells (aspect-square) don't blow up into giant squares on wide screens. */}
-      <div className="sticky top-0 z-10 -mx-6 bg-background px-6 pb-4">
-        <div className="max-w-xs">
-          <MonthCalendar
-            year={year}
-            month={month}
-            onPrevMonth={goToPrevMonth}
-            onNextMonth={goToNextMonth}
-            highlightedDays={highlightedDays}
-          />
-        </div>
+      {/* The only part of this page that scrolls. */}
+      <div className="flex-1 overflow-y-auto">
+        <MovieList
+          movies={MOCK_MOVIES}
+          selectedMovieId={selectedMovieId}
+          onSelectMovie={handleSelectMovie}
+        />
       </div>
-
-      <MovieList
-        movies={MOCK_MOVIES}
-        selectedMovieId={selectedMovieId}
-        onSelectMovie={handleSelectMovie}
-      />
     </div>
   )
 }

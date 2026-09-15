@@ -23,8 +23,9 @@ export function AppShell() {
         </div>
       </header>
 
-      {/* Only this area scrolls - the header above stays put. */}
-      <main className="flex-1 overflow-y-auto p-6">
+      {/* Fixed height, no scroll here - individual pages decide what (if
+          anything) inside them scrolls. */}
+      <main className="flex-1 overflow-hidden p-6">
         <Outlet />
       </main>
     </div>
