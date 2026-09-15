@@ -50,8 +50,8 @@ export function HomePage() {
   }, [selectedMovieId, year, month])
 
   return (
-    <div className="space-y-6">
-      <div>
+    <div>
+      <div className="mb-6">
         <h1 className="text-2xl font-semibold">Přehled promítání</h1>
         <p className="text-muted-foreground">
           Zatím placeholder — dny promítání se dopočítávají z ukázkových filmů, až bude
@@ -59,13 +59,16 @@ export function HomePage() {
         </p>
       </div>
 
-      <MonthCalendar
-        year={year}
-        month={month}
-        onPrevMonth={goToPrevMonth}
-        onNextMonth={goToNextMonth}
-        highlightedDays={highlightedDays}
-      />
+      {/* Stays on screen while the movie list below scrolls. */}
+      <div className="sticky top-0 z-10 -mx-6 bg-background px-6 pb-4">
+        <MonthCalendar
+          year={year}
+          month={month}
+          onPrevMonth={goToPrevMonth}
+          onNextMonth={goToNextMonth}
+          highlightedDays={highlightedDays}
+        />
+      </div>
 
       <MovieList
         movies={MOCK_MOVIES}
