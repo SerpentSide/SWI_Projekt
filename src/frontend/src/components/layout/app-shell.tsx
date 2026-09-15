@@ -12,8 +12,8 @@ export function AppShell() {
   const { logout } = useAuth()
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <header className="flex items-center justify-between border-b border-border px-6 py-4">
+    <div className="flex h-screen flex-col bg-background text-foreground">
+      <header className="flex shrink-0 items-center justify-between border-b border-border px-6 py-4">
         <span className="text-lg font-semibold text-brand">Cinema Reservations</span>
         <div className="flex items-center gap-2">
           <ThemeToggle />
@@ -23,7 +23,8 @@ export function AppShell() {
         </div>
       </header>
 
-      <main className="p-6">
+      {/* Only this area scrolls - the header above stays put. */}
+      <main className="flex-1 overflow-y-auto p-6">
         <Outlet />
       </main>
     </div>
