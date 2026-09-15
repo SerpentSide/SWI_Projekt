@@ -50,7 +50,7 @@ export function HomePage() {
   }, [selectedMovieId, year, month])
 
   return (
-    <div>
+    <div className="mx-auto max-w-3xl">
       <div className="mb-6">
         <h1 className="text-2xl font-semibold">Přehled promítání</h1>
         <p className="text-muted-foreground">
@@ -59,15 +59,18 @@ export function HomePage() {
         </p>
       </div>
 
-      {/* Stays on screen while the movie list below scrolls. */}
+      {/* Stays on screen while the movie list below scrolls. Width is capped so the
+          day cells (aspect-square) don't blow up into giant squares on wide screens. */}
       <div className="sticky top-0 z-10 -mx-6 bg-background px-6 pb-4">
-        <MonthCalendar
-          year={year}
-          month={month}
-          onPrevMonth={goToPrevMonth}
-          onNextMonth={goToNextMonth}
-          highlightedDays={highlightedDays}
-        />
+        <div className="max-w-xs">
+          <MonthCalendar
+            year={year}
+            month={month}
+            onPrevMonth={goToPrevMonth}
+            onNextMonth={goToNextMonth}
+            highlightedDays={highlightedDays}
+          />
+        </div>
       </div>
 
       <MovieList
