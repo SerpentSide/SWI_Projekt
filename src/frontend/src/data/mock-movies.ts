@@ -11,4 +11,6 @@ export const MOCK_MOVIES: MockMovie[] = [
   { id: 'film-2', title: 'Film 2', playsOnWeekdays: [1, 3] },
   { id: 'film-3', title: 'Film 3', playsOnWeekdays: [5, 6] },
   { id: 'film-4', title: 'Film 4', playsOnWeekdays: [0, 1, 2, 3, 4] },
+  { id: 'film-5', title: 'Film 5', playsOnWeekdays: [2] },
+  { id: 'film-6', title: 'Film 6', playsOnWeekdays: [5] },
 ]
