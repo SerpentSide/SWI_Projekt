@@ -22,7 +22,6 @@ interface SeatMapModalProps {
 export function SeatMapModal({ title, subtitle, screeningSeed, onClose }: SeatMapModalProps) {
   const takenSeats = React.useMemo(() => generateMockTakenSeats(screeningSeed), [screeningSeed])
   const [selectedSeats, setSelectedSeats] = React.useState<Set<string>>(new Set())
-  const [warning, setWarning] = React.useState<string | null>(null)
 
   React.useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -31,6 +30,23 @@ export function SeatMapModal({ title, subtitle, screeningSeed, onClose }: SeatMa
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
+
+  // Checked against the whole selection rather than blocking each click - two
+  // seats that each look "isolated" on their own can be picked together fine
+  // (e.g. both sides of a gap), so this can only be judged once both are picked.
+  const invalidRows = React.useMemo(() => {
+    const rows = new Set<number>()
+    for (let row = 1; row <= SEAT_ROWS; row++) {
+      const rowOccupied = Array.from(
+        { length: SEAT_COLS },
+        (_, c) => takenSeats.has(seatId(row, c)) || selectedSeats.has(seatId(row, c)),
+      )
+      if (hasIsolatedFreeSeat(rowOccupied)) rows.add(row)
+    }
+    return rows
+  }, [takenSeats, selectedSeats])
+
+  const canReserve = selectedSeats.size > 0 && invalidRows.size === 0
 
   function handleToggleSeat(row: number, col: number) {
     const id = seatId(row, col)
@@ -43,23 +59,12 @@ export function SeatMapModal({ title, subtitle, screeningSeed, onClose }: SeatMa
       } else {
         next.add(id)
       }
-
-      const rowOccupied = Array.from(
-        { length: SEAT_COLS },
-        (_, c) => takenSeats.has(seatId(row, c)) || next.has(seatId(row, c)),
-      )
-      if (hasIsolatedFreeSeat(rowOccupied)) {
-        setWarning('Tímto by zůstalo osamocené volné sedadlo - to není dovoleno.')
-        return current
-      }
-
-      setWarning(null)
       return next
     })
   }
 
   function handleReserve() {
-    if (selectedSeats.size === 0) return
+    if (!canReserve) return
     // TODO: replace with a real POST /reservations once the backend exists.
     onClose()
   }
@@ -144,17 +149,23 @@ export function SeatMapModal({ title, subtitle, screeningSeed, onClose }: SeatMa
           })}
         </div>
 
-        {warning && <p className="mt-3 text-sm text-destructive">{warning}</p>}
+        {invalidRows.size > 0 && (
+          <p className="mt-3 text-sm text-destructive">
+            Tento výběr by nechal osamocené volné sedadlo v řadě{' '}
+            {Array.from(invalidRows).sort((a, b) => a - b).join(', ')} - uprav výběr, než
+            budeš moct rezervovat.
+          </p>
+        )}
 
         <button
           type="button"
-          disabled={selectedSeats.size === 0}
+          disabled={!canReserve}
           onClick={handleReserve}
           className={cn(
             'mt-4 w-full rounded-DEFAULT py-2 text-sm font-medium transition-colors',
-            selectedSeats.size === 0
-              ? 'cursor-not-allowed bg-muted text-muted-foreground'
-              : 'cursor-pointer bg-brand text-brand-foreground hover:bg-brand-dark',
+            canReserve
+              ? 'cursor-pointer bg-brand text-brand-foreground hover:bg-brand-dark'
+              : 'cursor-not-allowed bg-muted text-muted-foreground',
           )}
         >
           Rezervovat{selectedSeats.size > 0 ? ` (${selectedSeats.size})` : ''}
