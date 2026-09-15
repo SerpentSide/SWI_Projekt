@@ -72,3 +72,14 @@
     font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
   }
 }
+
+@layer utilities {
+  /* Keeps an element scrollable while hiding its scrollbar, across browsers. */
+  .scrollbar-hide {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}
