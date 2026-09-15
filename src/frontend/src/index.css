@@ -1,0 +1,74 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Single source of truth for the color palette.
+ * Change a value here and it propagates everywhere (buttons, backgrounds, text, ...)
+ * because every Tailwind color in tailwind.config.js resolves to one of these vars.
+ *
+ * Format: "H S% L%" (HSL without commas) - that's what Tailwind's hsl(var(--x)) expects.
+ */
+:root {
+  /* Light theme */
+  --background: 0 0% 100%;
+  --foreground: 240 10% 12%;
+  --border: 240 6% 88%;
+
+  --surface: 240 20% 97%;
+  --surface-foreground: 240 10% 12%;
+
+  --muted: 240 6% 92%;
+  --muted-foreground: 240 5% 40%;
+
+  /* Brand pink - base #b00b69, darker #7b084a */
+  --brand: 326 88% 37%;
+  --brand-dark: 326 88% 26%;
+  --brand-foreground: 0 0% 100%;
+
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+
+  --radius: 0.5rem;
+}
+
+/* Dark theme is the default look for the app (see ThemeProvider), so it's driven
+   by the .dark class rather than prefers-color-scheme. */
+.dark {
+  --background: 240 12% 8%;
+  --foreground: 240 10% 92%;
+  --border: 240 8% 20%;
+
+  --surface: 240 12% 12%;
+  --surface-foreground: 240 10% 92%;
+
+  --muted: 240 8% 18%;
+  --muted-foreground: 240 5% 65%;
+
+  /* Same brand hue, slightly lifted lightness so it still pops on a dark surface */
+  --brand: 326 88% 45%;
+  --brand-dark: 326 88% 30%;
+  --brand-foreground: 0 0% 100%;
+
+  --destructive: 0 72% 55%;
+  --destructive-foreground: 0 0% 100%;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  html.light {
+    color-scheme: light;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  }
+}
