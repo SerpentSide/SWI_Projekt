@@ -11,6 +11,9 @@ interface MonthCalendarProps {
   onNextMonth: () => void
   /** Days (1-31) in the displayed month that should be highlighted. */
   highlightedDays?: Set<number>
+  /** Called when a highlighted day is clicked. Non-highlighted days aren't clickable. */
+  onDayClick?: (date: Date) => void
+  selectedDate?: Date | null
 }
 
 export function MonthCalendar({
@@ -19,6 +22,8 @@ export function MonthCalendar({
   onPrevMonth,
   onNextMonth,
   highlightedDays,
+  onDayClick,
+  selectedDate,
 }: MonthCalendarProps) {
   const weeks = getMonthWeeks(year, month)
   const today = new Date()
@@ -54,20 +59,34 @@ export function MonthCalendar({
 
             const isToday = isSameDay(cell.date, today)
             const isHighlighted = highlightedDays?.has(cell.day) ?? false
+            const isSelected = selectedDate ? isSameDay(cell.date, selectedDate) : false
+
+            const dayClassName = cn(
+              'flex aspect-square items-center justify-center rounded-DEFAULT text-sm transition-colors',
+              isHighlighted
+                ? 'bg-brand text-brand-foreground font-semibold'
+                : 'text-foreground',
+              isToday && !isHighlighted && 'ring-1 ring-inset ring-brand',
+              isSelected && 'ring-2 ring-inset ring-brand-foreground',
+            )
+
+            if (!isHighlighted) {
+              return (
+                <div key={`${weekIndex}-${dayIndex}`} className={dayClassName}>
+                  {cell.day}
+                </div>
+              )
+            }
 
             return (
-              <div
+              <button
                 key={`${weekIndex}-${dayIndex}`}
-                className={cn(
-                  'flex aspect-square items-center justify-center rounded-DEFAULT text-sm transition-colors',
-                  isHighlighted
-                    ? 'bg-brand text-brand-foreground font-semibold'
-                    : 'text-foreground',
-                  isToday && !isHighlighted && 'ring-1 ring-inset ring-brand',
-                )}
+                type="button"
+                onClick={() => onDayClick?.(cell.date)}
+                className={cn(dayClassName, 'cursor-pointer hover:bg-brand-dark')}
               >
                 {cell.day}
-              </div>
+              </button>
             )
           }),
         )}

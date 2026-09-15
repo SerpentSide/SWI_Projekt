@@ -1,6 +1,7 @@
 import * as React from 'react'
 
 import { MonthCalendar } from '@/components/calendar/month-calendar'
+import { MovieDetail } from '@/components/movies/movie-detail'
 import { MovieList } from '@/components/movies/movie-list'
 import { MOCK_MOVIES } from '@/data/mock-movies'
 import { getMonthWeeks } from '@/lib/calendar'
@@ -10,6 +11,7 @@ export function HomePage() {
   const [year, setYear] = React.useState(today.getFullYear())
   const [month, setMonth] = React.useState(today.getMonth())
   const [selectedMovieId, setSelectedMovieId] = React.useState<string | null>(null)
+  const [selectedDate, setSelectedDate] = React.useState<Date | null>(null)
 
   function goToPrevMonth() {
     if (month === 0) {
@@ -30,14 +32,16 @@ export function HomePage() {
   }
 
   function handleSelectMovie(movieId: string) {
+    setSelectedDate(null)
     setSelectedMovieId((current) => (current === movieId ? null : movieId))
   }
 
-  const highlightedDays = React.useMemo(() => {
-    const movie = MOCK_MOVIES.find((m) => m.id === selectedMovieId)
-    if (!movie) return undefined
+  const selectedMovie = MOCK_MOVIES.find((m) => m.id === selectedMovieId) ?? null
 
-    const weekdaySet = new Set(movie.playsOnWeekdays)
+  const highlightedDays = React.useMemo(() => {
+    if (!selectedMovie) return undefined
+
+    const weekdaySet = new Set(selectedMovie.playsOnWeekdays)
     const days = new Set<number>()
     for (const week of getMonthWeeks(year, month)) {
       for (const cell of week) {
@@ -47,7 +51,7 @@ export function HomePage() {
       }
     }
     return days
-  }, [selectedMovieId, year, month])
+  }, [selectedMovie, year, month])
 
   return (
     <div className="flex h-full gap-6">
@@ -60,6 +64,8 @@ export function HomePage() {
           onPrevMonth={goToPrevMonth}
           onNextMonth={goToNextMonth}
           highlightedDays={highlightedDays}
+          selectedDate={selectedDate}
+          onDayClick={setSelectedDate}
         />
         {/* TODO: rotate through featured posters on an interval once there's real data. */}
         <div className="flex aspect-[2/3] items-center justify-center rounded-DEFAULT border border-dashed border-muted-foreground/40 text-sm text-muted-foreground">
@@ -69,11 +75,19 @@ export function HomePage() {
 
       {/* Full height, scrollable, scrollbar hidden. */}
       <div className="scrollbar-hide flex-1 overflow-y-auto">
-        <MovieList
-          movies={MOCK_MOVIES}
-          selectedMovieId={selectedMovieId}
-          onSelectMovie={handleSelectMovie}
-        />
+        {selectedMovie && selectedDate ? (
+          <MovieDetail
+            movie={selectedMovie}
+            date={selectedDate}
+            onBack={() => setSelectedDate(null)}
+          />
+        ) : (
+          <MovieList
+            movies={MOCK_MOVIES}
+            selectedMovieId={selectedMovieId}
+            onSelectMovie={handleSelectMovie}
+          />
+        )}
       </div>
     </div>
   )
