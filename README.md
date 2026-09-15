@@ -8,7 +8,7 @@ A reservation system for cinema seats, built for SWI. The reserved resource is a
 | **Team** | *(fill in: team name)* |
 | **Members** | *(fill in: 3–4 members)* |
 | **Repository** | https://github.com/SerpentSide/SWI_Projekt |
-| **Stack** | Python 3.11 · FastAPI · PostgreSQL 16 · pytest ([why](docs/architecture-and-decisions.md#adr-002--python-311--fastapi--postgresql)) |
+| **Stack** | Python 3.11 · FastAPI · SQLite · pytest ([why](docs/architecture-and-decisions.md#adr-002--python-311--fastapi--sqlite)) |
 
 ## Documentation
 
@@ -83,10 +83,9 @@ Today the repository contains the schema and the C01 engineering spike. The API 
 not implemented yet — that is CP1 work.
 
 ```bash
-docker compose up -d                            # PostgreSQL 16 on localhost:55432
 python3 -m venv .venv
 ./.venv/bin/pip install -r requirements-dev.txt
-./.venv/bin/python -m pytest tests/ -v          # runs the spike
+./.venv/bin/python -m pytest tests/ -v          # runs the spike, SQLite file created in tmp_path
 ```
 
 Expected output:
@@ -97,14 +96,13 @@ tests/test_double_booking_spike.py::test_with_db_constraint_the_seat_is_sold_onc
 ```
 
 The first test is meant to pass by *reproducing the double-booking bug* with the safety
-index dropped; the second shows the index preventing it. Shut down with
-`docker compose down -v`.
+index dropped; the second shows the index preventing it. No external service to start or
+tear down — SQLite is a file, created fresh per test run by pytest's `tmp_path` fixture.
 
 ## Repository layout
 
 ```
 README.md                            this file -- domain summary + walking skeleton
-docker-compose.yml                   PostgreSQL 16 for local development and tests
 requirements-dev.txt
 docs/
   intent-and-change.md               Project Frame, future pressure, change + review loop

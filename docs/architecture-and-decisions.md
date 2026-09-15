@@ -13,7 +13,7 @@ Each ADR says what we picked, what it costs, and what would make us change our m
                 Domain layer
                    │   Reservation lifecycle, overlap rule, no-orphan rule
                    ▼
-                Persistence layer        ──────►  PostgreSQL
+                Persistence layer        ──────►  SQLite
                    │   repositories, transactions      ▲
                    │                                   │
                    │                          uq_confirmed_seat_per_screening
@@ -51,7 +51,7 @@ the seat, otherwise two sources of truth would drift.
 
 ---
 
-## ADR-002 — Python 3.11 + FastAPI + PostgreSQL
+## ADR-002 — Python 3.11 + FastAPI + SQLite
 
 **Status:** accepted
 
@@ -59,25 +59,34 @@ the seat, otherwise two sources of truth would drift.
 stack and allows any other stack provided the team supports it themselves and justifies
 the choice. This ADR is that justification.
 
-**Decision.** Python + FastAPI + psycopg + PostgreSQL, tested with pytest.
+**Decision.** Python + FastAPI + SQLite (via the standard-library `sqlite3` module),
+tested with pytest.
 
 **Why.** The team is faster in Python than in Java, and in a course where the deliverable
 is a *design* under a *time budget*, framework familiarity converts directly into domain
 work. FastAPI gives request validation and an OpenAPI description without extra
-machinery. PostgreSQL is kept from the recommended stack deliberately, because the one
-guarantee we depend on — the partial unique index of ADR-004 — is a PostgreSQL feature and
-not something we want to reimplement.
+machinery. We deviate from the recommended PostgreSQL as well: SQLite is a single file
+with no server to install, configure, or containerise, which matters for a team of
+students who need to be productive from commit one. It still gives us the one guarantee
+ADR-004 depends on — a partial unique index — so nothing about the invariant we care about
+is lost by leaving PostgreSQL behind.
 
 **Costs we accept.**
 
 - No compile-time type checking. Mitigation: type hints plus tests around the domain rules.
 - We support the stack ourselves; nothing about it is pre-blessed by the course.
-- Transaction and isolation handling is more explicit than Spring's `@Transactional`.
-  The spike (ADR-004) shows we do not need much of it, which lowers this cost.
+- SQLite allows only one writer at a time for the whole database file. Concurrent readers
+  are fine, but concurrent confirms serialise on a lock instead of interleaving the way
+  they would under PostgreSQL's MVCC. ADR-004's spike measures what this means in practice
+  for the no-double-booking invariant.
+- SQLite has no native `ENUM` or timezone-aware timestamp type; `schema.sql` uses `TEXT`
+  with `CHECK` constraints and ISO-8601 strings instead.
 
-**What would change our mind.** If the team ends up spending more time on plumbing than on
-the domain, switching to the supported stack is cheap this early — the domain model and all
-three documents are stack-independent.
+**What would change our mind.** If the selected future pressure (a premiere on-sale burst,
+several hundred concurrent confirms) turns out to need real concurrent writers rather than
+serialised ones — something the spike in ADR-004 does not test at that scale — moving to
+PostgreSQL is still cheap this early: the domain model and all three documents are
+stack-independent.
 
 ---
 
@@ -113,7 +122,7 @@ timestamps, which lazy evaluation cannot provide.
 **Context.** Two viewers may confirm the same seat at the same instant. We did not know
 whether a `SELECT`-then-write availability check in the application survives that.
 
-**Decision.** The invariant lives in PostgreSQL:
+**Decision.** The invariant lives in SQLite:
 
 ```sql
 CREATE UNIQUE INDEX uq_confirmed_seat_per_screening
@@ -122,30 +131,40 @@ CREATE UNIQUE INDEX uq_confirmed_seat_per_screening
 ```
 
 The application's availability `SELECT` is kept for user experience only and is explicitly
-**not** a correctness guarantee. `UniqueViolation` on confirm is mapped to **HTTP 409**.
+**not** a correctness guarantee. `IntegrityError` (`UNIQUE constraint failed`) on confirm
+is mapped to **HTTP 409**.
 
 **Evidence.** Measured, not assumed. With the index dropped, two concurrent confirms both
 succeeded and the seat was sold twice; with it in place, exactly one succeeded. The
 application-level check returned its "seat taken" outcome zero times in either run. Full
 transcript and method in [`evidence-and-evolution.md`](evidence-and-evolution.md).
 
-**Alternative rejected.** Pessimistic locking with `SELECT ... FOR UPDATE`. The spike shows
-the index alone is sufficient, and locking would add contention on the hottest rows during
-precisely the premiere burst of our selected future pressure.
+**A wrinkle specific to SQLite.** Unlike PostgreSQL, SQLite only ever lets one connection
+hold the write lock, so the two confirms cannot truly interleave — the second writer blocks
+until the first commits. The spike shows that this does **not** make the application-level
+`SELECT` safe: both threads still read "free" before either one writes, so the outcome the
+invariant has to prevent is the same, just reached by a different path (a blocked writer
+that then fails the uniqueness check, instead of two writers whose commits race). See
+`evidence-and-evolution.md` for what this means for ADR-002's stated cost.
+
+**Alternative rejected.** Pessimistic locking with `SELECT ... FOR UPDATE`-style locking
+reads. The spike shows the index alone is sufficient, and SQLite's single-writer model
+already serialises writes for us, so explicit locking would only add complexity for no
+extra correctness during precisely the premiere burst of our selected future pressure.
 
 **The assumption this rests on.** The index is keyed on `screening_id`, not on a time range.
 It is equivalent to the time-based rule in the Project Frame **only while two screenings in
 one hall never overlap**. That assumption is recorded in
 [`intent-and-change.md`](intent-and-change.md). If overlapping screenings ever become
-possible, this index silently stops enforcing the stated rule, and the fix is an exclusion
-constraint over a `tstzrange` instead:
+possible, this index silently stops enforcing the stated rule. SQLite has no exclusion
+constraint (PostgreSQL's `EXCLUDE USING gist` is not available here), so the fix would have
+to be an application-level check over stored time ranges, done inside the same transaction
+as the confirm and re-verified by re-reading under the write lock — a real loss of the
+database-level guarantee this ADR currently relies on.
 
-```sql
-EXCLUDE USING gist (seat_id WITH =, time_window WITH &&) WHERE (state = 'CONFIRMED')
-```
-
-We did not build that now because it costs a `btree_gist` extension and a stored time range
-for a situation that cannot currently arise.
+We did not build that now because the situation cannot currently arise, and because it
+would reintroduce exactly the "does the check survive concurrency" question this spike was
+run to answer.
 
 ---
 
@@ -153,8 +172,9 @@ for a situation that cannot currently arise.
 
 **Status:** accepted
 
-**Context.** ADR-004 puts the invariant in a unique index. PostgreSQL cannot index across
-two tables, and both columns the index needs live on the parent `reservations` row.
+**Context.** ADR-004 puts the invariant in a unique index. SQLite (like PostgreSQL) cannot
+index across two tables, and both columns the index needs live on the parent `reservations`
+row.
 
 **Decision.** Copy `screening_id` and `state` onto each `reservation_seats` row.
 

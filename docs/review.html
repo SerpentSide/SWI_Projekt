@@ -143,7 +143,7 @@
     <span class="chip">branch <b>c01-project-frame-and-spike</b></span>
     <span class="chip">repo <b>SerpentSide/SWI_Projekt</b></span>
     <span class="chip on">spike proveden · 2 testy zelené</span>
-    <span class="chip">PostgreSQL <b>16.15</b></span>
+    <span class="chip">SQLite <b>3.53</b></span>
   </div>
 </header>
 
@@ -254,9 +254,9 @@
 
 <section class="sec">
   <h2>Engineering spike — varianta A, persistence</h2>
-  <p><b>Otázka:</b> Když dva diváci potvrdí totéž sedadlo ve stejném okamžiku, zastaví druhého PostgreSQL — nebo to musí uhlídat naše aplikace?</p>
-  <p><b>Co jsme udělali:</b> Reálná PostgreSQL 16 v Dockeru, dvě vlákna na dvou spojeních. Obě nejdřív udělají <code>SELECT</code> „je sedadlo volné?", počkají na společné bariéře, a <b>teprve pak</b> zapisují — což vynutí přesně to prokládání, jaké vyrobí nápor při premiéře. Totéž jsme spustili dvakrát: jednou se zahozeným parciálním unikátním indexem, jednou s ním.</p>
-<pre>PostgreSQL 16.15 on aarch64-unknown-linux-musl
+  <p><b>Otázka:</b> Když dva diváci potvrdí totéž sedadlo ve stejném okamžiku, zastaví druhého SQLite — nebo to musí uhlídat naše aplikace?</p>
+  <p><b>Co jsme udělali:</b> Reálný soubor SQLite, dvě vlákna na dvou spojeních. Obě nejdřív udělají <code>SELECT</code> „je sedadlo volné?", počkají na společné bariéře, a <b>teprve pak</b> zapisují — což vynutí přesně to prokládání, jaké vyrobí nápor při premiéře. Totéž jsme spustili dvakrát: jednou se zahozeným parciálním unikátním indexem, jednou s ním. (Spike byl původně spuštěn proti PostgreSQL; po přechodu na SQLite v ADR-002 jsme ho spustili znovu, protože jde o otázku na chování konkrétní databáze — staré číslo by po přechodu bylo jen odhad v přestrojení za měření.)</p>
+<pre>SQLite 3.53.4 (Python sqlite3 modul)
 
 RUN 1 — parciální unique index ZAHOZEN
   rezervace 1 : <span class="p">CONFIRMED</span>
@@ -267,15 +267,16 @@ RUN 2 — parciální unique index NA MÍSTĚ
   rezervace 1 : REJECTED_BY_DB
   rezervace 2 : <span class="g">CONFIRMED</span>
   CONFIRMED řádků pro (projekce 1, sedadlo A5): <span class="g">1</span>   ← sedadlo prodáno jednou</pre>
-  <p><b>Tři zjištění</b>, z nichž druhé je ostřejší, než jsem čekal:</p>
+  <p><b>Čtyři zjištění</b>, tři stejná jako u PostgreSQL, jedno nové:</p>
   <ul class="plain">
-    <li>Bez indexu se sedadlo <b>opravdu prodá dvakrát</b>. Při výchozí izolaci <code>READ COMMITTED</code> ani jedna transakce nevidí nepotvrzený zápis té druhé, takže obě oprávněně věří, že je volno.</li>
+    <li>Bez indexu se sedadlo <b>opravdu prodá dvakrát</b>. Oba <code>SELECT</code>y proběhnou dřív, než kterékoli vlákno začne zapisovat, takže obě oprávněně věří, že je volno — zámek SQLite na zápis začne hrát roli až u zápisu samotného, kdy je špatné rozhodnutí už hotové.</li>
     <li><b>Aplikační kontrola nezafungovala ani jednou.</b> Měřili jsme zvlášť výsledek „SELECT viděl obsazeno" — padl <b>nulakrát v obou bězích</b>. Takže to není nespolehlivá pojistka, ona to při tomhle prokládání není pojistka vůbec.</li>
-    <li><b>Index sám o sobě stačí.</b> Žádné <code>SELECT … FOR UPDATE</code> nebylo potřeba. Kdo z těch dvou vyhraje, <b>není deterministické</b> — proto test tvrdí tvar výsledku, ne vítěze; jinak by blikal.</li>
+    <li><b>Index sám o sobě stačí.</b> Žádný explicitní locking read nebyl potřeba. Kdo z těch dvou vyhraje, <b>není deterministické</b> — proto test tvrdí tvar výsledku, ne vítěze; jinak by blikal.</li>
+    <li><b>Nové, specifické pro SQLite: prohrávající zápis čeká, neprovede se souběžně.</b> Na rozdíl od PostgreSQL, kde obě transakce mohly mít zápis rozpracovaný souběžně, SQLite pustí k zápisu jen jedno spojení najednou — druhé počká, až první commitne, a pak jeho vlastní <code>UPDATE</code> spadne na <code>UNIQUE constraint</code>. Architektonický závěr je stejný, jen mechanismus je jiný.</li>
   </ul>
   <div class="note">
     <div class="t">Rozhodnutí</div>
-    <p>Invariant bydlí v databázi. <code>UniqueViolation</code> je <b>očekávaný stav</b> a mapuje se na <b>HTTP 409</b>, ne na chybu serveru. Aplikační <code>SELECT</code> zůstává, ale je degradován na <b>UX prvek</b> — a je výslovně zapsáno, že není zárukou správnosti. Bez spiku bychom ho nasadili v přesvědčení, že nás chrání.</p>
+    <p>Invariant bydlí v databázi. <code>UNIQUE constraint failed</code> je <b>očekávaný stav</b> a mapuje se na <b>HTTP 409</b>, ne na chybu serveru. Aplikační <code>SELECT</code> zůstává, ale je degradován na <b>UX prvek</b> — a je výslovně zapsáno, že není zárukou správnosti. Bez spiku bychom ho nasadili v přesvědčení, že nás chrání.</p>
   </div>
   <p><b>Co spike nezodpověděl:</b> testoval dva souběžné požadavky, ne několik set, jak popisuje naše future pressure. Kontence na indexu a vyčerpání connection poolu zůstávají neměřené. To je přirozeně navazující spike a patří k práci, kde pressure Q skutečně implementujeme.</p>
 </section>
@@ -325,7 +326,7 @@ RUN 2 — parciální unique index NA MÍSTĚ
   <ul class="plain">
     <li><b>Orphan rule se počítá proti drženým sedadlům.</b> Divák tak může dostat odmítnutí kvůli holdu, který za třicet sekund vypadne. Opačná volba ale dovolí dvěma lidem společně vyrobit orphan, který ani jednomu z nich systém neukázal. Nemáme data, vybral jsem tu variantu, kde divák nikdy nevidí mapu, podle které nemůže jednat. <b>To je zapsané jako Unknown v Project Frame</b> — je to produktová otázka pro provozovatele kina, ne technická.</li>
     <li><b>Okraje řady se počítají jako obsazené.</b> Důsledek, který vypadá jako bug: <b>sedadlo číslo 2 v jinak prázdné řadě nejde nikdy rezervovat</b>, protože osamotí jedničku. Je to záměr, ale kdo nečetl ADR-006, nahlásí to jako chybu.</li>
-    <li><b>Denormalizace v <code>reservation_seats</code>.</b> Kopírujeme tam <code>screening_id</code> a <code>state</code>, protože PostgreSQL neumí index přes dvě tabulky. Cena: každý přechod stavu musí zapsat obě tabulky. Beru to, protože alternativa je přijít o databázovou záruku ze spiku — a zapomenutý update je mnohem viditelnější chyba než tiché dvojité prodání sedadla.</li>
+    <li><b>Denormalizace v <code>reservation_seats</code>.</b> Kopírujeme tam <code>screening_id</code> a <code>state</code>, protože SQLite (stejně jako PostgreSQL) neumí index přes dvě tabulky. Cena: každý přechod stavu musí zapsat obě tabulky. Beru to, protože alternativa je přijít o databázovou záruku ze spiku — a zapomenutý update je mnohem viditelnější chyba než tiché dvojité prodání sedadla.</li>
   </ul>
 </section>
 
@@ -352,7 +353,7 @@ chyby na téhle cestě:  404 neznámá projekce/sedadlo
 
 <footer>
   <div><b style="color:var(--ink)">Kde co je.</b> Project Frame → <a href="intent-and-change.md"><code>docs/intent-and-change.md</code></a> · rozhodnutí ADR-001…007 → <a href="architecture-and-decisions.md"><code>docs/architecture-and-decisions.md</code></a> · spike → <a href="evidence-and-evolution.md"><code>docs/evidence-and-evolution.md</code></a> · schéma → <a href="../src/cinema/schema.sql"><code>src/cinema/schema.sql</code></a> · test → <a href="../tests/test_double_booking_spike.py"><code>tests/test_double_booking_spike.py</code></a></div>
-  <div><b style="color:var(--ink)">Jak si to spustit.</b> <code>docker compose up -d</code> → <code>python3 -m venv .venv</code> → <code>./.venv/bin/pip install -r requirements-dev.txt</code> → <code>./.venv/bin/python -m pytest tests/ -v</code>. První test má projít tím, že <b>reprodukuje double-booking</b> se zahozeným indexem; druhý ukazuje index, jak mu brání.</div>
+  <div><b style="color:var(--ink)">Jak si to spustit.</b> <code>python3 -m venv .venv</code> → <code>./.venv/bin/pip install -r requirements-dev.txt</code> → <code>./.venv/bin/python -m pytest tests/ -v</code>. Žádná externí služba — SQLite je soubor, který si pytest vytvoří čerstvý pro každý test. První test má projít tím, že <b>reprodukuje double-booking</b> se zahozeným indexem; druhý ukazuje index, jak mu brání.</div>
   <div style="color:var(--ink-dim);font-size:13px">Vizuál je zatím provizorní — řeší ho někdo jiný. Obsah je to, co má sedět.</div>
   <div style="color:var(--ink-dim);font-size:13px">Otevřeš dvojklikem na <code>docs/review.html</code>. Nepotřebuje server ani přihlášení.</div>
 </footer>
@@ -367,9 +368,9 @@ const DECISIONS = [
   { id:"d2", tag:"model", h:"Rezervace drží víc sedadel najednou",
     why:"Lidé chodí do kina ve skupinách. Bez toho by orphan rule neměla co kontrolovat.",
     cost:"Tabulka navíc (<code>reservation_seats</code>) a každý zápis stavu se dotýká dvou tabulek." },
-  { id:"d3", tag:"ADR-002", h:"Python 3.11 + FastAPI + PostgreSQL",
-    why:"Tým je v Pythonu rychlejší než v Javě, a v předmětu, kde je výstupem návrh pod časovým limitem, se znalost frameworku přímo mění v doménovou práci. PostgreSQL si ze seznamu doporučeného stacku necháváme schválně.",
-    cost:"Žádná typová kontrola při překladu a stack si <b>podporujeme sami</b> — zadání ho neuvádí mezi podporovanými, takže jsme ho museli zdůvodnit. Transakce jsou explicitnější než Spring <code>@Transactional</code>." },
+  { id:"d3", tag:"ADR-002", h:"Python 3.11 + FastAPI + SQLite",
+    why:"Tým je v Pythonu rychlejší než v Javě, a v předmětu, kde je výstupem návrh pod časovým limitem, se znalost frameworku přímo mění v doménovou práci. Od doporučeného PostgreSQL odcházíme schválně — SQLite je jeden soubor bez serveru a pořád nám dává parciální unique index, na kterém stojí ADR-004.",
+    cost:"Žádná typová kontrola při překladu a stack si <b>podporujeme sami</b> — zadání ho neuvádí mezi podporovanými, takže jsme ho museli zdůvodnit. SQLite pustí k zápisu jen jedno spojení najednou — souběžné confirm požadavky se tedy serializují místo aby se prokládaly, jak by mohly u PostgreSQL." },
   { id:"d4", tag:"ADR-003", h:"Hold 15 minut, vypršení se vyhodnocuje líně",
     why:"Žádný scheduler. <code>hold_until</code> se porovná s časem až při čtení nebo potvrzení. Hold, který nikdo nepozoruje, stejně nemá žádný efekt.",
     cost:"Stav <code>EXPIRED</code> je chvíli jen implicitní — řádek může v tabulce hlásit <code>DRAFT</code> a chovat se jako vypršelý. <b>Každý dotaz na dostupnost proto musí obsahovat podmínku <code>hold_until &gt; now()</code></b>, a zapomenout na ni v jednom dotazu je reálná chyba." },
@@ -377,7 +378,7 @@ const DECISIONS = [
     why:"Změřeno, ne odhadnuto — viz spike. Parciální unique index na <code>(screening_id, seat_id) WHERE state = 'CONFIRMED'</code>.",
     cost:"Index je <b>nosný prvek, ne optimalizace</b>. Kdo ho při úklidu schématu zahodí, tiše vypne celé pravidlo. Proto je u něj v <code>schema.sql</code> komentář." },
   { id:"d6", tag:"ADR-005", h:"reservation_seats denormalizuje screening_id a state",
-    why:"PostgreSQL neumí postavit index přes dvě tabulky, a index z předchozího rozhodnutí obě ty hodnoty potřebuje.",
+    why:"SQLite (stejně jako PostgreSQL) neumí postavit index přes dvě tabulky, a index z předchozího rozhodnutí obě ty hodnoty potřebuje.",
     cost:"<b>Je to opravdová denormalizace a netvářím se jinak.</b> Každý přechod stavu musí zapsat obě tabulky; zapomenutý zápis znamená, že index chrání něco jiného, než si myslíme. Přechod je proto v jediné metodě repozitáře. Databázový trigger je zjevné zpevnění, jestli ta disciplína někdy poleví." },
   { id:"d7", tag:"ADR-006", h:"Orphan rule: vyhodnocuje se při create, okraje řady se počítají jako obsazené",
     why:"Kontrola při create řekne divákovi pravdu ve chvíli, kdy vybírá, místo aby jeho výběr přijala a odmítla ho až u platby. Okraje se počítají proto, že osamocené sedadlo u uličky je stejně neprodejné jako uprostřed.",
