@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rezervace kina C01 — revize rozhodnutí</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Narrow:wght@600;700&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root{
+    color-scheme: dark;
+    --bg:#0A0A0C; --surface:#141318; --surface-2:#1B1920; --rule:#2B2833;
+    --ink:#F3F0F5; --ink-soft:#A49DAE; --ink-dim:#736C7E;
+    --pink:#FF4D8D; --pink-deep:#C9235F; --pink-tint:#2A1020;
+    --mint:#5BD4A4; --mint-tint:#0F2A22;
+    --display:"Archivo Narrow",Arial Narrow,Helvetica,sans-serif;
+    --body:"IBM Plex Sans",-apple-system,Segoe UI,Roboto,sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.62;
+       padding-inline:20px;padding-block:0;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:860px;margin:0 auto;display:flex;flex-direction:column;gap:56px;padding-block:56px 96px}
+  h1,h2,h3{font-family:var(--display);font-weight:700;text-wrap:balance;margin:0;line-height:1.12}
+  h1{font-size:clamp(34px,7vw,56px);letter-spacing:-.01em}
+  h2{font-size:clamp(22px,4vw,30px)}
+  h3{font-size:17px;font-family:var(--body);font-weight:600;line-height:1.35}
+  p{margin:0;max-width:66ch}
+  a{color:var(--pink);text-underline-offset:3px}
+  a:focus-visible,button:focus-visible,input:focus-visible,textarea:focus-visible{
+    outline:2px solid var(--pink);outline-offset:2px}
+  code,.mono{font-family:var(--mono);font-size:.88em}
+  code{background:var(--surface-2);padding:.1em .38em;border-radius:3px;color:var(--ink)}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--pink)}
+  .lede{font-size:18px;color:var(--ink-soft);max-width:60ch}
+  .sec{display:flex;flex-direction:column;gap:20px}
+  .sec > p, .sec > ol, .sec > ul{color:var(--ink-soft)}
+  .rule{height:1px;background:var(--rule);border:0;margin:0}
+
+  header{display:flex;flex-direction:column;gap:20px;border-bottom:2px solid var(--pink);padding-bottom:28px}
+  .meta{display:flex;flex-wrap:wrap;gap:8px 10px;font-family:var(--mono);font-size:12px}
+  .chip{border:1px solid var(--rule);padding:4px 9px;color:var(--ink-soft);white-space:nowrap}
+  .chip b{color:var(--ink);font-weight:600}
+  .chip.on{border-color:var(--mint);color:var(--mint)}
+
+  ol.steps{margin:0;padding:0;list-style:none;display:grid;gap:12px;counter-reset:s}
+  ol.steps li{counter-increment:s;display:grid;grid-template-columns:28px 1fr;gap:12px;align-items:start}
+  ol.steps li::before{content:counter(s);font-family:var(--mono);font-size:12px;color:var(--pink);
+    border:1px solid var(--pink-deep);width:26px;height:26px;display:grid;place-items:center}
+
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  .scroll{overflow-x:auto}
+  th,td{text-align:left;padding:9px 12px 9px 0;border-bottom:1px solid var(--rule);vertical-align:top}
+  th{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-dim);font-weight:400}
+  td:first-child{white-space:nowrap;font-family:var(--mono);color:var(--pink);font-size:13px}
+
+  pre{background:var(--surface);border-left:2px solid var(--pink-deep);margin:0;padding:16px 18px;
+      overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.6;color:var(--ink-soft)}
+  pre b{color:var(--ink);font-weight:600}
+  pre .g{color:var(--mint)}
+  pre .p{color:var(--pink)}
+
+  .note{background:var(--pink-tint);border:1px solid var(--pink-deep);padding:16px 18px;
+        display:flex;flex-direction:column;gap:6px}
+  .note .t{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--pink)}
+  .note p{color:var(--ink);max-width:62ch}
+
+  .seatmap{display:flex;flex-direction:column;gap:10px;font-family:var(--mono);font-size:13px;color:var(--ink-soft)}
+  .seatrow{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .seats{display:flex;gap:4px}
+  .st{width:22px;height:22px;display:grid;place-items:center;font-size:11px;border:1px solid var(--rule);color:var(--ink-dim)}
+  .st.x{background:var(--surface-2);border-color:var(--rule);color:var(--ink-soft)}
+  .st.r{background:var(--pink);border-color:var(--pink);color:#12040A;font-weight:600}
+  .verd{font-size:12px}
+  .verd.ok{color:var(--mint)} .verd.no{color:var(--pink)}
+
+  .dec{background:var(--surface);border:1px solid var(--rule);display:flex;flex-direction:column}
+  .dec > .body{padding:18px;display:flex;flex-direction:column;gap:10px}
+  .dec .tag{font-family:var(--mono);font-size:11px;color:var(--ink-dim);letter-spacing:.1em}
+  .dec .cost{font-size:14px;color:var(--ink-soft);border-left:2px solid var(--rule);padding-left:12px;max-width:62ch}
+  .dec .cost b{color:var(--ink);font-weight:600}
+  .vote{border-top:1px solid var(--rule);padding:12px 18px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .vote .lbl{font-family:var(--mono);font-size:11px;color:var(--ink-dim);letter-spacing:.1em;text-transform:uppercase;margin-right:2px}
+  button.v{font-family:var(--body);font-size:13px;background:transparent;color:var(--ink-soft);
+    border:1px solid var(--rule);padding:5px 12px;cursor:pointer}
+  button.v:hover{border-color:var(--ink-soft);color:var(--ink)}
+  button.v[aria-pressed="true"]{background:var(--pink);border-color:var(--pink);color:#12040A;font-weight:600}
+  button.v[aria-pressed="true"].agree{background:var(--mint);border-color:var(--mint);color:#07160F}
+  .tally{font-family:var(--mono);font-size:12px;color:var(--ink-dim);margin-left:auto}
+  .tally span{color:var(--ink-soft)}
+
+  .who{display:flex;flex-wrap:wrap;gap:10px;align-items:center;background:var(--surface);
+       border:1px solid var(--rule);padding:14px 16px}
+  .who label{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-dim)}
+  .who input{flex:1;min-width:160px;background:var(--bg);border:1px solid var(--rule);color:var(--ink);
+    font-family:var(--body);font-size:14px;padding:7px 10px}
+  .who .state{font-family:var(--mono);font-size:12px;color:var(--ink-dim)}
+
+  ul.dod{margin:0;padding:0;list-style:none;display:grid;gap:7px}
+  ul.dod li{display:grid;grid-template-columns:20px 1fr;gap:10px;font-size:14.5px;align-items:start}
+  ul.dod li i{font-style:normal;font-family:var(--mono);font-size:13px;line-height:1.5}
+  ul.dod li.done i{color:var(--mint)} ul.dod li.todo i{color:var(--pink)}
+  ul.dod li.todo{color:var(--ink)} ul.dod li.done{color:var(--ink-soft)}
+
+  ul.plain{margin:0;padding-left:18px;display:grid;gap:8px;max-width:66ch}
+
+  footer{border-top:1px solid var(--rule);padding-top:24px;display:flex;flex-direction:column;gap:12px;
+         font-size:14px;color:var(--ink-soft)}
+
+  @media (prefers-reduced-motion: no-preference){button.v{transition:background .12s,border-color .12s,color .12s}}
+  @media (max-width:520px){ .tally{margin-left:0;width:100%} }
+</style><style>
+  html{margin:0}
+  body{margin:0}
+  img{max-width:100%}
+  [hidden]{display:none!important}
+  .srcnote{background:var(--surface-2);border:1px solid var(--rule);padding:14px 16px;font-size:14px;color:var(--ink-soft)}
+  .srcnote b{color:var(--ink)}
+  .export{display:flex;flex-direction:column;gap:12px;background:var(--surface);border:1px solid var(--rule);padding:18px}
+  .export .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+  .export textarea{width:100%;min-height:150px;background:var(--bg);border:1px solid var(--rule);color:var(--ink);
+    font-family:var(--mono);font-size:12.5px;line-height:1.55;padding:12px;resize:vertical}
+  .export label{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-dim)}
+  button.big{font-family:var(--body);font-size:14px;font-weight:600;background:var(--pink);border:1px solid var(--pink);
+    color:#12040A;padding:9px 16px;cursor:pointer}
+  button.big:hover{background:var(--pink-deep);border-color:var(--pink-deep);color:#fff}
+  button.ghost{font-family:var(--body);font-size:14px;background:transparent;border:1px solid var(--rule);
+    color:var(--ink-soft);padding:9px 16px;cursor:pointer}
+  button.ghost:hover{border-color:var(--ink-soft);color:var(--ink)}
+  .notes{width:100%;min-height:90px;background:var(--bg);border:1px solid var(--rule);color:var(--ink);
+    font-family:var(--body);font-size:14px;padding:10px 12px;resize:vertical}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">SWI · Projekt · C01</div>
+  <h1>Rezervace sedadel v kině</h1>
+  <p class="lede">Tohle je všechno, co jsem za tým rozhodl, než vznikl první řádek kódu. Projděte to a u každého rozhodnutí řekněte, jestli s ním jdete dál. Teď je změna zadarmo — po C03 už ne.</p>
+  <div class="meta">
+    <span class="chip">branch <b>c01-project-frame-and-spike</b></span>
+    <span class="chip">repo <b>SerpentSide/SWI_Projekt</b></span>
+    <span class="chip on">spike proveden · 2 testy zelené</span>
+    <span class="chip">PostgreSQL <b>16.15</b></span>
+  </div>
+</header>
+
+<section class="sec">
+  <h2>Co po vás chci</h2>
+  <ol class="steps">
+    <li><span>Přečíst <b>Doménu</b> a <b>Pravidla</b> — to je jádro, na kterém stojí všechno ostatní.</span></li>
+    <li><span>U každého z <b>devíti rozhodnutí</b> kliknout verdikt. Zajímá mě hlavně to, s čím nesouhlasíte.</span></li>
+    <li><span>Doplnit <b>tři věci, které za vás udělat nemůžu</b> — jsou dole v Definition of Done.</span></li>
+  </ol>
+  <div class="srcnote"><b>Tahle stránka je shrnutí, ne zdroj pravdy.</b> Závazné znění je v markdownech
+  v <code>docs/</code> — ta stránka z nich vychází, ale nedrží se s nimi automaticky v synchronu. Když
+  se rozejdou, platí markdown. Slouží k jednorázové revizi před C02, ne jako živá dokumentace.</div>
+  <div class="who">
+    <label for="reviewer">Kdo jsi</label>
+    <input id="reviewer" type="text" placeholder="jméno nebo přezdívka" autocomplete="off">
+    <span class="state" id="dbstate">ukládá se jen v tomhle prohlížeči</span>
+  </div>
+</section>
+
+<hr class="rule">
+
+<section class="sec">
+  <h2>Doména v kostce</h2>
+  <p>Rezervujeme <b>konkrétní sedadlo na konkrétní projekci</b>. Jedna rezervace může držet víc sedadel, protože lidé chodí do kina ve skupinách.</p>
+  <div class="scroll"><table>
+    <tr><th>Pojem</th><th>Co to je</th></tr>
+    <tr><td>Seat</td><td><b>Rezervovaný resource.</b> Sál, řada, číslo. Obsazené po dobu projekce.</td></tr>
+    <tr><td>Reservation</td><td>Nárok jednoho diváka na 1..N sedadel jedné projekce. Má identitu, čas a stav.</td></tr>
+    <tr><td>User</td><td>Divák, který rezervaci vytváří.</td></tr>
+    <tr><td>Screening</td><td>Projekce = film × sál × začátek. Dodává rezervaci její časové okno.</td></tr>
+    <tr><td>Hall / Movie</td><td>Sál s rozložením sedadel; film s délkou, která určuje konec projekce.</td></tr>
+  </table></div>
+  <p>Časové okno rezervace <b>nezadává uživatel</b> — odvodí se z projekce.</p>
+
+  <h3>Stavy</h3>
+<pre>          create()                        confirm()
+   ○ ───────────────► <b>DRAFT</b> ────────────────────────► <b>CONFIRMED</b>
+                        │   hold_until = now + 15 min           │
+     hold vypršel       │                                       │ cancel()
+                        ├─────────────► <b>EXPIRED</b>                 │ (do začátku projekce)
+          cancel()      │                                       │
+                        └─────────────► <b>CANCELLED</b> ◄─────────────┘</pre>
+
+  <div class="note">
+    <div class="t">Jedna definice, na které stojí obě pravidla</div>
+    <p><b>Sedadlo je obsazené</b>, pokud pro danou projekci existuje rezervace ve stavu <code>CONFIRMED</code>, <b>nebo</b> ve stavu <code>DRAFT</code>, jejíž patnáctiminutový hold ještě běží. Bez té druhé půlky by hold neblokoval nic a byl by jen dekorace.</p>
+  </div>
+</section>
+
+<hr class="rule">
+
+<section class="sec">
+  <h2>Pravidla</h2>
+
+  <h3>Společné pravidlo (ze zadání)</h3>
+  <p>Dvě potvrzené rezervace téhož sedadla se nesmí překrývat v čase. Vynucuje ho <b>databáze</b>, ne aplikace — viz spike níž.</p>
+
+  <h3>Vlastní pravidlo — žádné osamocené sedadlo</h3>
+  <p>Rezervace nesmí zanechat právě jedno volné sedadlo izolované mezi obsazenými v téže řadě. <b>Okraje řady se počítají jako obsazené</b>, takže osamocené sedadlo u uličky je taky orphan.</p>
+  <div class="seatmap">
+    <div class="seatrow">
+      <span class="seats"><i class="st x">X</i><i class="st x">X</i><i class="st"></i><i class="st"></i><i class="st"></i><i class="st"></i><i class="st x">X</i><i class="st x">X</i></span>
+      <span>výchozí stav řady A</span>
+    </div>
+    <div class="seatrow">
+      <span class="seats"><i class="st x">X</i><i class="st x">X</i><i class="st r">R</i><i class="st r">R</i><i class="st"></i><i class="st"></i><i class="st x">X</i><i class="st x">X</i></span>
+      <span class="verd ok">OK — volný běh A5–A6 má délku 2</span>
+    </div>
+    <div class="seatrow">
+      <span class="seats"><i class="st x">X</i><i class="st x">X</i><i class="st r">R</i><i class="st"></i><i class="st r">R</i><i class="st"></i><i class="st x">X</i><i class="st x">X</i></span>
+      <span class="verd no">REJECT — A4 zůstane osamocené</span>
+    </div>
+    <div class="seatrow">
+      <span class="seats"><i class="st x">X</i><i class="st x">X</i><i class="st"></i><i class="st r">R</i><i class="st r">R</i><i class="st r">R</i><i class="st x">X</i><i class="st x">X</i></span>
+      <span class="verd no">REJECT — A3 zůstane osamocené</span>
+    </div>
+  </div>
+  <p>Proč to kino chce: izolované jedno sedadlo se skoro nikdy neprodá, takže každý vzniklý orphan je ztracená tržba dané projekce.</p>
+
+  <h3>Hranice systému</h3>
+  <p><code>NotificationService</code> — jedna externí závislost, poskytovatel e-mailu/SMS přes HTTP. Pro CP1 stub za rozhraním. <b>Selhání notifikace nikdy nesmí shodit potvrzenou rezervaci</b> — prodej sedadla je byznys výsledek, oznámení je vedlejší efekt.</p>
+</section>
+
+<hr class="rule">
+
+<section class="sec" id="decisions">
+  <h2>Devět rozhodnutí k revizi</h2>
+  <p>U každého je i to, <b>co stojí</b> — tam hledejte důvod nesouhlasit.</p>
+  <div id="deccards" style="display:flex;flex-direction:column;gap:14px"></div>
+
+  <div class="export">
+    <label for="notes">Poznámky k čemukoliv výše</label>
+    <textarea id="notes" class="notes" placeholder="co ti nesedí, co bys udělal jinak, na co jsem se nezeptal…"></textarea>
+    <label for="summary">Souhrn k vložení do pull requestu</label>
+    <textarea id="summary" readonly aria-live="polite"></textarea>
+    <div class="row">
+      <button class="big" type="button" id="copy">Zkopírovat souhrn</button>
+      <button class="ghost" type="button" id="reset">Vymazat moje verdikty</button>
+      <span class="state" id="copystate"></span>
+    </div>
+    <div style="font-size:13px;color:var(--ink-dim)">Verdikty žijou jen v tvém prohlížeči — nikam se neodesílají.
+    Proto je vysyp sem a nalep do komentáře v PR, ať je má tým pohromadě.</div>
+  </div>
+</section>
+
+<hr class="rule">
+
+<section class="sec">
+  <h2>Engineering spike — varianta A, persistence</h2>
+  <p><b>Otázka:</b> Když dva diváci potvrdí totéž sedadlo ve stejném okamžiku, zastaví druhého PostgreSQL — nebo to musí uhlídat naše aplikace?</p>
+  <p><b>Co jsme udělali:</b> Reálná PostgreSQL 16 v Dockeru, dvě vlákna na dvou spojeních. Obě nejdřív udělají <code>SELECT</code> „je sedadlo volné?", počkají na společné bariéře, a <b>teprve pak</b> zapisují — což vynutí přesně to prokládání, jaké vyrobí nápor při premiéře. Totéž jsme spustili dvakrát: jednou se zahozeným parciálním unikátním indexem, jednou s ním.</p>
+<pre>PostgreSQL 16.15 on aarch64-unknown-linux-musl
+
+RUN 1 — parciální unique index ZAHOZEN
+  rezervace 1 : <span class="p">CONFIRMED</span>
+  rezervace 2 : <span class="p">CONFIRMED</span>
+  CONFIRMED řádků pro (projekce 1, sedadlo A5): <span class="p">2</span>   ← sedadlo prodáno dvakrát
+
+RUN 2 — parciální unique index NA MÍSTĚ
+  rezervace 1 : REJECTED_BY_DB
+  rezervace 2 : <span class="g">CONFIRMED</span>
+  CONFIRMED řádků pro (projekce 1, sedadlo A5): <span class="g">1</span>   ← sedadlo prodáno jednou</pre>
+  <p><b>Tři zjištění</b>, z nichž druhé je ostřejší, než jsem čekal:</p>
+  <ul class="plain">
+    <li>Bez indexu se sedadlo <b>opravdu prodá dvakrát</b>. Při výchozí izolaci <code>READ COMMITTED</code> ani jedna transakce nevidí nepotvrzený zápis té druhé, takže obě oprávněně věří, že je volno.</li>
+    <li><b>Aplikační kontrola nezafungovala ani jednou.</b> Měřili jsme zvlášť výsledek „SELECT viděl obsazeno" — padl <b>nulakrát v obou bězích</b>. Takže to není nespolehlivá pojistka, ona to při tomhle prokládání není pojistka vůbec.</li>
+    <li><b>Index sám o sobě stačí.</b> Žádné <code>SELECT … FOR UPDATE</code> nebylo potřeba. Kdo z těch dvou vyhraje, <b>není deterministické</b> — proto test tvrdí tvar výsledku, ne vítěze; jinak by blikal.</li>
+  </ul>
+  <div class="note">
+    <div class="t">Rozhodnutí</div>
+    <p>Invariant bydlí v databázi. <code>UniqueViolation</code> je <b>očekávaný stav</b> a mapuje se na <b>HTTP 409</b>, ne na chybu serveru. Aplikační <code>SELECT</code> zůstává, ale je degradován na <b>UX prvek</b> — a je výslovně zapsáno, že není zárukou správnosti. Bez spiku bychom ho nasadili v přesvědčení, že nás chrání.</p>
+  </div>
+  <p><b>Co spike nezodpověděl:</b> testoval dva souběžné požadavky, ne několik set, jak popisuje naše future pressure. Kontence na indexu a vyčerpání connection poolu zůstávají neměřené. To je přirozeně navazující spike a patří k práci, kde pressure Q skutečně implementujeme.</p>
+</section>
+
+<hr class="rule">
+
+<section class="sec">
+  <h2>Future pressure — kategorie Q</h2>
+  <p><b>Konkrétní tlak:</b> při spuštění předprodeje na velkou premiéru se několik set diváků pokusí rezervovat sedadla na <b>tutéž projekci</b> během několika sekund, a velká část z nich míří na stejnou hrstku „nejlepších" sedadel uprostřed sálu.</p>
+  <p><b>Proč je to pro nás relevantní:</b> provoz kina není rozprostřený, je nárazový a soustředěný na málo projekcí. Ten náraz útočí přesně na operaci, na které stojí naše správnost — <code>DRAFT → CONFIRMED</code> pro konkrétní sedadlo. Tlak tím rozhoduje architektonickou otázku: jestli ochrana proti double-bookingu bydlí v aplikaci, nebo v databázi. Přesně to šel zodpovědět spike. <b>V C01 ji neimplementujeme</b>, je zapsaná proto, aby řídila další práci.</p>
+</section>
+
+<hr class="rule">
+
+<section class="sec">
+  <h2>Definition of Done — 15 položek</h2>
+  <ul class="dod">
+    <li class="todo"><i>[ ]</i> tým 3–4 členové <b>— doplňte jména</b></li>
+    <li class="done"><i>[×]</i> společný repozitář</li>
+    <li class="done"><i>[×]</i> jasný reservation domain — rezervace sedadel v kině</li>
+    <li class="done"><i>[×]</i> Resource + Reservation + User</li>
+    <li class="done"><i>[×]</i> smysluplné stavy — DRAFT / CONFIRMED / CANCELLED / EXPIRED</li>
+    <li class="done"><i>[×]</i> create + confirm + cancel + availability</li>
+    <li class="done"><i>[×]</i> společné overlap pravidlo</li>
+    <li class="done"><i>[×]</i> 1 vlastní business rule — žádné osamocené sedadlo</li>
+    <li class="done"><i>[×]</i> 1 externí hranice — NotificationService</li>
+    <li class="done"><i>[×]</i> kompletní Project Frame</li>
+    <li class="done"><i>[×]</i> 1 future pressure — Q, nápor při premiéře</li>
+    <li class="todo"><i>[ ]</i> 1 reviewed and integrated change <b>— otevřete PR z branche, jeden z vás ho zreviduje, pak merge</b></li>
+    <li class="done"><i>[×]</i> 1 provedený engineering spike — spuštěn, 2 testy zelené</li>
+    <li class="done"><i>[×]</i> spike evidence + decision</li>
+    <li class="done"><i>[×]</i> definovaný CP1 walking skeleton</li>
+  </ul>
+  <div class="note">
+    <div class="t">Tři věci, které za vás udělat nemůžu</div>
+    <p><b>1.</b> Název týmu a jména členů — zástupné texty jsou v <code>README.md</code> a v <code>docs/intent-and-change.md</code>.<br>
+    <b>2.</b> Kdo spike psal a kdo ho revidoval — tabulka v <code>docs/intent-and-change.md</code>, sekce <i>C01 change and review loop</i>.<br>
+    <b>3.</b> Samotná review smyčka — otevřít pull request z branche <code>c01-project-frame-and-spike</code>, jiný člen než autor si projde diff i výstup spiku, teprve pak merge do <code>main</code>.</p>
+  </div>
+</section>
+
+<hr class="rule">
+
+<section class="sec">
+  <h2>Kde konkrétně čekám nesouhlas</h2>
+  <p>Tři místa, kde jsem rozhodl, i když šlo rozhodnout jinak. Kdyby vás mělo něco zajímat, tak tohle.</p>
+  <ul class="plain">
+    <li><b>Orphan rule se počítá proti drženým sedadlům.</b> Divák tak může dostat odmítnutí kvůli holdu, který za třicet sekund vypadne. Opačná volba ale dovolí dvěma lidem společně vyrobit orphan, který ani jednomu z nich systém neukázal. Nemáme data, vybral jsem tu variantu, kde divák nikdy nevidí mapu, podle které nemůže jednat. <b>To je zapsané jako Unknown v Project Frame</b> — je to produktová otázka pro provozovatele kina, ne technická.</li>
+    <li><b>Okraje řady se počítají jako obsazené.</b> Důsledek, který vypadá jako bug: <b>sedadlo číslo 2 v jinak prázdné řadě nejde nikdy rezervovat</b>, protože osamotí jedničku. Je to záměr, ale kdo nečetl ADR-006, nahlásí to jako chybu.</li>
+    <li><b>Denormalizace v <code>reservation_seats</code>.</b> Kopírujeme tam <code>screening_id</code> a <code>state</code>, protože PostgreSQL neumí index přes dvě tabulky. Cena: každý přechod stavu musí zapsat obě tabulky. Beru to, protože alternativa je přijít o databázovou záruku ze spiku — a zapomenutý update je mnohem viditelnější chyba než tiché dvojité prodání sedadla.</li>
+  </ul>
+</section>
+
+<hr class="rule">
+
+<section class="sec">
+  <h2>CP1 walking skeleton</h2>
+  <p>Jedna end-to-end cesta. <b>Teď jen definovaná</b>, runnable až po C03 / před C04.</p>
+<pre><b>POST /reservations</b>
+  → validate          projekce existuje; sedadla patří do sálu té projekce;
+                      sedadla nejsou obsazená; platí orphan rule
+  → persist           INSERT reservation (state = DRAFT, hold_until = now + 15 min)
+                      + jeden reservation_seats řádek na sedadlo, v jedné transakci,
+                      jištěno indexem uq_confirmed_seat_per_screening
+  → return            <span class="g">201 Created</span>  { "reservation_id": 42, "hold_until": "…" }
+  → automated check   pytest: POST vrátí 201 s id
+                             → GET /reservations/42 hlásí DRAFT
+                             → GET /screenings/1/availability ukáže sedadla obsazená
+
+chyby na téhle cestě:  404 neznámá projekce/sedadlo
+                       409 sedadlo je už zabrané (včetně race z ADR-004)
+                       422 orphan rule výběr odmítla</pre>
+</section>
+
+<footer>
+  <div><b style="color:var(--ink)">Kde co je.</b> Project Frame → <a href="intent-and-change.md"><code>docs/intent-and-change.md</code></a> · rozhodnutí ADR-001…007 → <a href="architecture-and-decisions.md"><code>docs/architecture-and-decisions.md</code></a> · spike → <a href="evidence-and-evolution.md"><code>docs/evidence-and-evolution.md</code></a> · schéma → <a href="../src/cinema/schema.sql"><code>src/cinema/schema.sql</code></a> · test → <a href="../tests/test_double_booking_spike.py"><code>tests/test_double_booking_spike.py</code></a></div>
+  <div><b style="color:var(--ink)">Jak si to spustit.</b> <code>docker compose up -d</code> → <code>python3 -m venv .venv</code> → <code>./.venv/bin/pip install -r requirements-dev.txt</code> → <code>./.venv/bin/python -m pytest tests/ -v</code>. První test má projít tím, že <b>reprodukuje double-booking</b> se zahozeným indexem; druhý ukazuje index, jak mu brání.</div>
+  <div style="color:var(--ink-dim);font-size:13px">Vizuál je zatím provizorní — řeší ho někdo jiný. Obsah je to, co má sedět.</div>
+  <div style="color:var(--ink-dim);font-size:13px">Otevřeš dvojklikem na <code>docs/review.html</code>. Nepotřebuje server ani přihlášení.</div>
+</footer>
+
+</div>
+
+<script>
+const DECISIONS = [
+  { id:"d1", tag:"ADR-001", h:"Resource je sedadlo, ne sál ani projekce",
+    why:"Jediná varianta, kde povinné pravidlo ze zadání platí doslova: sedadlo A5 nesmí mít dvě potvrzené rezervace v překrývajícím se čase.",
+    cost:"Obsazenost se musí vždycky <b>odvozovat</b> z rezervací a nikdy ukládat na sedadlo, jinak vzniknou dva zdroje pravdy, které se rozejdou." },
+  { id:"d2", tag:"model", h:"Rezervace drží víc sedadel najednou",
+    why:"Lidé chodí do kina ve skupinách. Bez toho by orphan rule neměla co kontrolovat.",
+    cost:"Tabulka navíc (<code>reservation_seats</code>) a každý zápis stavu se dotýká dvou tabulek." },
+  { id:"d3", tag:"ADR-002", h:"Python 3.11 + FastAPI + PostgreSQL",
+    why:"Tým je v Pythonu rychlejší než v Javě, a v předmětu, kde je výstupem návrh pod časovým limitem, se znalost frameworku přímo mění v doménovou práci. PostgreSQL si ze seznamu doporučeného stacku necháváme schválně.",
+    cost:"Žádná typová kontrola při překladu a stack si <b>podporujeme sami</b> — zadání ho neuvádí mezi podporovanými, takže jsme ho museli zdůvodnit. Transakce jsou explicitnější než Spring <code>@Transactional</code>." },
+  { id:"d4", tag:"ADR-003", h:"Hold 15 minut, vypršení se vyhodnocuje líně",
+    why:"Žádný scheduler. <code>hold_until</code> se porovná s časem až při čtení nebo potvrzení. Hold, který nikdo nepozoruje, stejně nemá žádný efekt.",
+    cost:"Stav <code>EXPIRED</code> je chvíli jen implicitní — řádek může v tabulce hlásit <code>DRAFT</code> a chovat se jako vypršelý. <b>Každý dotaz na dostupnost proto musí obsahovat podmínku <code>hold_until &gt; now()</code></b>, a zapomenout na ni v jednom dotazu je reálná chyba." },
+  { id:"d5", tag:"ADR-004", h:"Ochrana proti double-bookingu je v databázi, ne v aplikaci",
+    why:"Změřeno, ne odhadnuto — viz spike. Parciální unique index na <code>(screening_id, seat_id) WHERE state = 'CONFIRMED'</code>.",
+    cost:"Index je <b>nosný prvek, ne optimalizace</b>. Kdo ho při úklidu schématu zahodí, tiše vypne celé pravidlo. Proto je u něj v <code>schema.sql</code> komentář." },
+  { id:"d6", tag:"ADR-005", h:"reservation_seats denormalizuje screening_id a state",
+    why:"PostgreSQL neumí postavit index přes dvě tabulky, a index z předchozího rozhodnutí obě ty hodnoty potřebuje.",
+    cost:"<b>Je to opravdová denormalizace a netvářím se jinak.</b> Každý přechod stavu musí zapsat obě tabulky; zapomenutý zápis znamená, že index chrání něco jiného, než si myslíme. Přechod je proto v jediné metodě repozitáře. Databázový trigger je zjevné zpevnění, jestli ta disciplína někdy poleví." },
+  { id:"d7", tag:"ADR-006", h:"Orphan rule: vyhodnocuje se při create, okraje řady se počítají jako obsazené",
+    why:"Kontrola při create řekne divákovi pravdu ve chvíli, kdy vybírá, místo aby jeho výběr přijala a odmítla ho až u platby. Okraje se počítají proto, že osamocené sedadlo u uličky je stejně neprodejné jako uprostřed.",
+    cost:"<b>Sedadlo číslo 2 v jinak prázdné řadě nejde nikdy rezervovat</b>, protože osamotí jedničku. Záměr, ale vypadá to jako bug. A rezervace může padnout kvůli cizímu holdu, který za chvíli vyprší." },
+  { id:"d8", tag:"ADR-007", h:"V CP1 žádný frontend",
+    why:"Walking skeleton je definovaný jako serverová cesta ověřená automatickým testem. Frontend přidá druhý stack a druhou CI cestu, aniž by tu cestu posunul o krok.",
+    cost:"Do té doby existuje mapa sedadel jen jako odpověď <code>check availability</code> a pravidla se ukazují testy, ne obrázkem." },
+  { id:"d9", tag:"zadání", h:"Formálně deklarujeme jedno vlastní pravidlo, ne dvě",
+    why:"Zadání chce <b>právě jedno</b> vlastní business rule. Orphan rule je tedy to deklarované pravidlo, patnáctiminutový hold je součást stavového modelu. Je to poctivé — hold opravdu <b>je</b> vlastnost životního cyklu, ne byznys pravidlo.",
+    cost:"Kdyby cvičící četl hold jako druhé pravidlo, je to rozdíl ve formulaci, ne ve věci. Fakticky máme obojí." }
+];
+
+const VERDICTS = [
+  { k:"agree",  label:"Souhlasím" },
+  { k:"doubt",  label:"Mám výhradu" },
+  { k:"reject", label:"Nesouhlasím" }
+];
+const LABEL = Object.fromEntries(VERDICTS.map(v => [v.k, v.label]));
+
+const store = {
+  get(key, fallback) {
+    try { const v = localStorage.getItem(key); return v === null ? fallback : JSON.parse(v); }
+    catch (e) { return fallback; }
+  },
+  set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) {} }
+};
+
+let reviewer = store.get("swi-c01-reviewer", "");
+let verdicts = store.get("swi-c01-verdicts", {});
+let notes    = store.get("swi-c01-notes", "");
+
+const nameInput = document.getElementById("reviewer");
+const notesBox  = document.getElementById("notes");
+const summaryEl = document.getElementById("summary");
+const copyState = document.getElementById("copystate");
+
+nameInput.value = reviewer;
+notesBox.value  = notes;
+
+document.getElementById("deccards").innerHTML = DECISIONS.map(d => `
+  <article class="dec">
+    <div class="body">
+      <div class="tag">${d.tag}</div>
+      <h3>${d.h}</h3>
+      <p style="color:var(--ink-soft)">${d.why}</p>
+      <div class="cost"><b>Co to stojí:</b> ${d.cost}</div>
+    </div>
+    <div class="vote" data-for="${d.id}">
+      <span class="lbl">Verdikt</span>
+      ${VERDICTS.map(v => `<button class="v ${v.k}" type="button" data-v="${v.k}" aria-pressed="false">${v.label}</button>`).join("")}
+      <span class="tally" id="t-${d.id}"></span>
+    </div>
+  </article>`).join("");
+
+function buildSummary() {
+  const who = reviewer.trim() || "(doplň jméno)";
+  const done = DECISIONS.filter(d => verdicts[d.id]).length;
+  const lines = [
+    `## Revize rozhodnutí C01 — ${who}`,
+    `Posouzeno ${done} z ${DECISIONS.length} rozhodnutí.`,
+    ""
+  ];
+  DECISIONS.forEach(d => {
+    const v = verdicts[d.id];
+    lines.push(`- **${d.tag}** ${d.h.replace(/<[^>]+>/g, "")} — ${v ? LABEL[v] : "_neposouzeno_"}`);
+  });
+  const n = notes.trim();
+  if (n) { lines.push("", "### Poznámky", n); }
+  return lines.join("\n");
+}
+
+function render() {
+  DECISIONS.forEach(d => {
+    const chosen = verdicts[d.id];
+    document.querySelectorAll(`.vote[data-for="${d.id}"] button.v`).forEach(b => {
+      b.setAttribute("aria-pressed", String(chosen === b.dataset.v));
+    });
+    const t = document.getElementById("t-" + d.id);
+    if (t) t.textContent = chosen ? "" : "neposouzeno";
+  });
+  summaryEl.value = buildSummary();
+}
+
+nameInput.addEventListener("input", () => {
+  reviewer = nameInput.value;
+  store.set("swi-c01-reviewer", reviewer);
+  render();
+});
+
+notesBox.addEventListener("input", () => {
+  notes = notesBox.value;
+  store.set("swi-c01-notes", notes);
+  render();
+});
+
+document.getElementById("deccards").addEventListener("click", (e) => {
+  const btn = e.target.closest("button.v");
+  if (!btn) return;
+  const id = btn.closest(".vote").dataset.for;
+  verdicts[id] = verdicts[id] === btn.dataset.v ? undefined : btn.dataset.v;
+  if (!verdicts[id]) delete verdicts[id];
+  store.set("swi-c01-verdicts", verdicts);
+  render();
+});
+
+document.getElementById("copy").addEventListener("click", async () => {
+  const text = buildSummary();
+  try {
+    await navigator.clipboard.writeText(text);
+    copyState.textContent = "zkopírováno";
+  } catch (e) {
+    summaryEl.focus();
+    summaryEl.select();
+    copyState.textContent = "zkopíruj ručně z pole výše (Cmd+C)";
+  }
+  setTimeout(() => { copyState.textContent = ""; }, 4000);
+});
+
+document.getElementById("reset").addEventListener("click", () => {
+  verdicts = {};
+  notes = "";
+  notesBox.value = "";
+  store.set("swi-c01-verdicts", verdicts);
+  store.set("swi-c01-notes", notes);
+  render();
+});
+
+render();
+</script>
+</body>
+</html>

@@ -17,6 +17,7 @@ A reservation system for cinema seats, built for SWI. The reserved resource is a
 | [docs/intent-and-change.md](docs/intent-and-change.md) | Project Frame, selected future pressure, the C01 change + review loop |
 | [docs/architecture-and-decisions.md](docs/architecture-and-decisions.md) | Architecture sketch and ADR-001 … ADR-007 |
 | [docs/evidence-and-evolution.md](docs/evidence-and-evolution.md) | C01 engineering spike: question, method, measured result, decision |
+| [docs/review.html](docs/review.html) | Team review page — every C01 decision with what it costs. Open it in a browser (double-click, no server needed). Written in Czech for the team. |
 
 ## The domain in one screen
 
