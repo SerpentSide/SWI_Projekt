@@ -1,6 +1,8 @@
+import * as React from 'react'
 import { ArrowLeft } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { SeatMapModal } from '@/components/seating/seat-map-modal'
 import type { MockMovie } from '@/data/mock-movies'
 
 const DATE_FORMATTER = new Intl.DateTimeFormat('cs-CZ', {
@@ -17,6 +19,9 @@ interface MovieDetailProps {
 
 /** Shown in place of the movie list once a screening day has been picked on the calendar. */
 export function MovieDetail({ movie, date, onBack }: MovieDetailProps) {
+  const [selectedTime, setSelectedTime] = React.useState<string | null>(null)
+  const dateLabel = DATE_FORMATTER.format(date)
+
   return (
     <div className="p-1">
       <Button variant="ghost" size="sm" onClick={onBack} className="mb-4">
@@ -25,21 +30,29 @@ export function MovieDetail({ movie, date, onBack }: MovieDetailProps) {
       </Button>
 
       <h2 className="text-xl font-semibold">{movie.title}</h2>
-      <p className="mb-4 text-sm capitalize text-muted-foreground">
-        {DATE_FORMATTER.format(date)}
-      </p>
+      <p className="mb-4 text-sm capitalize text-muted-foreground">{dateLabel}</p>
 
       <div className="flex flex-wrap gap-2">
         {movie.screeningTimes.map((time) => (
           <button
             key={time}
             type="button"
+            onClick={() => setSelectedTime(time)}
             className="rounded-DEFAULT border border-brand px-4 py-2 text-sm font-medium text-brand transition-colors hover:bg-brand hover:text-brand-foreground"
           >
             {time}
           </button>
         ))}
       </div>
+
+      {selectedTime && (
+        <SeatMapModal
+          title={movie.title}
+          subtitle={`${dateLabel}, ${selectedTime}`}
+          screeningSeed={`${movie.id}|${date.toDateString()}|${selectedTime}`}
+          onClose={() => setSelectedTime(null)}
+        />
+      )}
     </div>
   )
 }
