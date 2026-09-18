@@ -210,8 +210,8 @@ We are **not** implementing this pressure in C01. It is recorded here to steer l
 |---|---|
 | **Issue / task** | `C01 engineering spike: does the database prevent double-booking of a seat?` |
 | **Change** | Added the reservation schema, the partial unique index on `(screening_id, seat_id) WHERE state = 'CONFIRMED'`, and a concurrency test that drives two simultaneous transactions at the same seat. |
-| **Author** | *(fill in: team member who implemented it)* |
-| **Reviewer** | *(fill in: different team member, reviewed before integration)* |
+| **Author** | *Stanislav Urban* |
+| **Reviewer** | *Šimon Adámek* |
 | **Reviewed before integration** | Yes — opened as a pull request from branch `c01-project-frame-and-spike`; the reviewer read the diff and the spike output before the branch was merged. |
 | **Integrated** | Merged into `main`. |
 
