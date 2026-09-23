@@ -9,12 +9,6 @@ reservation is the only state-changing acceptance step in this baseline, and not
 models a human approval workflow — if one is ever needed it is a distinct, later change, not
 a rename of Confirm.
 
-Each slice follows the required template. The acceptance-gate check for each operation
-(the nine standing questions: meaning, need, observable, feasible, verifiable, state/time,
-concurrency, consistency, unknown) lives separately in
-[`c02-review.md`](c02-review.md), so it can be read and re-read as a review pass on its
-own rather than being interleaved with the specification prose.
-
 Terms used below without re-definition are defined once, here:
 
 - **Occupied** (from the Project Frame): a seat is occupied for a screening if a reservation
@@ -57,11 +51,11 @@ codes below — never a silent partial success.
 **State change:** *(none)* → `DRAFT`.
 
 **Referenced business rule(s) / invariant(s):** Definition of Occupied, including its
-exclusivity guarantee — at most one viewer may hold a seat as a live `DRAFT` or as
-`CONFIRMED` at any moment (`intent-and-change.md`); no-orphan rule (ADR-006); the
-screening-not-started boundary (`intent-and-change.md`, Core operations table). Create
-now carries the same class of race-safety requirement confirm has under ADR-004 — see the
-Concurrency row in [`c02-review.md`](c02-review.md).
+exclusivity guarantee (BR-02) — at most one viewer may hold a seat as a live `DRAFT` or as
+`CONFIRMED` at any moment (`intent-and-change.md`); no-orphan rule (BR-04, ADR-006); the
+screening-not-started boundary (BR-01, `intent-and-change.md` Core operations table).
+Create now carries the same class of race-safety requirement confirm has under ADR-004 —
+see the Concurrency row in [`c02-review.md`](c02-review.md).
 
 ### Main success scenario
 1. Viewer picks a screening and 1..N seats, submits the request.
@@ -152,6 +146,26 @@ screening does not exist.
   map reports A5 `occupied`, A6 `free`.
 - A freshly seeded screening with no reservations → every seat `free`.
 
+### Timing example
+
+One `DRAFT` reservation on seat A5, created at `2026-09-23T19:40:00Z`, giving
+`hold_until = 2026-09-23T19:55:00Z` (create's fixed 15-minute window). No other
+reservation touches A5. Calling Check Availability for this screening at different
+moments of `now` returns:
+
+| `now` | A5 status | Why |
+|---|---|---|
+| `2026-09-23T19:39:59Z` (before create) | `free` | no reservation exists yet for A5 |
+| `2026-09-23T19:40:00Z` (moment of create) | `occupied` | `DRAFT`, `hold_until` (19:55:00Z) is in the future |
+| `2026-09-23T19:47:30Z` (mid-hold) | `occupied` | still well inside the 15-minute window |
+| `2026-09-23T19:54:59Z` (1s before `hold_until`) | `occupied` | `hold_until` has not yet passed |
+| `2026-09-23T19:55:00Z` (exactly `hold_until`) | `free` | the boundary is exclusive — eligibility requires `hold_until > now`, so equality already counts as expired, not occupied |
+| `2026-09-23T19:55:01Z` (1s after) | `free` | the hold has lazily expired; nothing was written to the row for this to be true, it simply reads that way now (ADR-003) |
+
+If A5 is instead confirmed at, say, `19:50:00Z` (before its hold would have expired), it
+reads `occupied` from `19:40:00Z` onward indefinitely: once `CONFIRMED`, `hold_until`
+stops being relevant, and only Cancel frees the seat again.
+
 ### Rationale / source
 README "Definition of 'occupied'"; ADR-003; ADR-004's demotion note.
 
@@ -179,8 +193,9 @@ partially confirmed.
 **State change:** `DRAFT` → `CONFIRMED`.
 
 **Referenced business rule(s) / invariant(s):** the mandatory rule ("two confirmed
-reservations for the same seat must not overlap in time"), enforced here — and only here —
-by `uq_confirmed_seat_per_screening` (ADR-004); ADR-005's requirement that `reservations`
+reservations for the same seat must not overlap in time", BR-02, over the `[starts_at,
+ends_at)` windows of BR-01), enforced here — and only here — by
+`uq_confirmed_seat_per_screening` (ADR-004); ADR-005's requirement that `reservations`
 and `reservation_seats` change together, in one transaction; the `NotificationService`
 boundary rule ("a failed notification must never fail a confirmed reservation").
 
@@ -254,9 +269,9 @@ starts. Cancel is a state change, not a physical delete — the row and its hist
 **State change:** `DRAFT` → `CANCELLED`, or `CONFIRMED` → `CANCELLED`.
 
 **Referenced business rule(s) / invariant(s):** Definition of Occupied (a cancelled
-reservation's seats stop counting as occupied immediately); the explicit Project Frame
-boundary "allowed until the screening starts"; ADR-005's same-transaction requirement for
-`reservations` and `reservation_seats`.
+reservation's seats stop counting as occupied immediately); the cancellation policy (BR-03),
+including its `now < screening.starts_at` boundary (BR-01); ADR-005's same-transaction
+requirement for `reservations` and `reservation_seats`.
 
 ### Main success scenario
 1. Client requests cancel on a reservation id.
@@ -291,4 +306,67 @@ README state diagram; ADR-005.
   in OP-03, decided the same way (`409`, not idempotent) for the same reason — a client
   cannot distinguish a genuine re-cancel from a retried request if both return `200`. Listed
   as open rather than settled by evidence, exactly like OP-03's twin case.
+
+## Shared Business Rules / Invariants
+
+Rules that hold across more than one operation, stated once here instead of restated in
+every OP-xx slice. Each slice's "Referenced business rule(s)" line cites the BR-xx codes
+below where they apply.
+
+### BR-01 — Interval semantics: `[start, end)`
+
+A reservation's time window is the screening's `[starts_at, ends_at)` — half-open: the
+start instant is included, the end instant is not. It is never entered by the user; it is
+derived as `[screening.starts_at, screening.starts_at + movie.duration)`
+(`intent-and-change.md`). Two windows overlap iff
+`a.starts_at < b.ends_at AND b.starts_at < a.ends_at`. This is why `schema.sql` enforces
+`CHECK (ends_at > starts_at)`, and why every "before the screening starts" boundary in this
+document reads `now < starts_at` (closed at the start instant, not `now <= starts_at`).
+
+Applies to: OP-01 (the screening-not-started precondition), OP-03 (the interval that BR-02's
+overlap check is defined over), OP-04 (the cancellation deadline).
+
+### BR-02 — Exclusive Resource invariant
+
+At no committed state may two `CONFIRMED` reservations overlap for the same exclusive
+resource (`Seat`).
+
+*Domain justification, per the task's alternative clause:* our domain does **not** use a
+capacity-based resource, so BR-02 is kept as given, not replaced. The resource is the
+individual `Seat` (ADR-001), chosen specifically so the assignment's exclusive-resource rule
+applies literally instead of being reinterpreted as a capacity rule over
+`Screening`-with-N-seats — see ADR-001's rejected alternatives for why a capacity model was
+not used.
+
+Enforced by: `uq_confirmed_seat_per_screening` (ADR-004), proven race-safe by the C01 spike
+(`evidence-and-evolution.md`). The Project Frame extends the same exclusivity to live
+`DRAFT` holds, not only `CONFIRMED` reservations (policy settled; the database mechanism for
+the `DRAFT` side is not yet built — see OP-01's Assumption/TBD).
+
+Applies to: OP-01 (create must not hand out an already-held seat), OP-02 (this is exactly
+what "occupied" reports), OP-03 (this is what the database constraint enforces).
+
+### BR-03 — Cancellation policy
+
+A `DRAFT` or `CONFIRMED` reservation may be cancelled — by its owner, or by a box office
+operator on request — at any time before the screening starts (`now < screening.starts_at`,
+BR-01's closed-start convention). Cancellation is a state transition to `CANCELLED`, never a
+physical delete: the row, its `id`, and its history (`created_at`, `confirmed_at` if any)
+are retained. `CANCELLED` and `EXPIRED` are both terminal — neither accepts any further
+transition, so cancelling an already-`CANCELLED` or already-`EXPIRED` reservation is
+rejected, not a no-op.
+
+Applies to: OP-04 (its own rule), OP-01 and OP-03 (both share the same
+`now < screening.starts_at` boundary and the same "only `DRAFT`/`CONFIRMED` may still be
+acted on" precondition).
+
+### BR-04 — Domain-specific rule from C01: no orphan seat
+
+A reservation must not leave exactly one free seat isolated between occupied seats in the
+same row; both row ends count as occupied (`intent-and-change.md`, ADR-006). Evaluated at
+`create`, against the Definition of Occupied above — so live `DRAFT` holds count as occupied
+for this check too, not only `CONFIRMED` reservations.
+
+Applies to: OP-01 (the only operation that evaluates it), OP-02 (the seat map it reports is
+exactly what the rule is evaluated against).
 
