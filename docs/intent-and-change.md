@@ -53,7 +53,7 @@ screening: `[screening.starts_at, screening.starts_at + movie.duration]`.
 
 | Operation | Effect |
 |---|---|
-| **Create reservation** | Validates the request, holds the chosen seats, returns a reservation in state `DRAFT` with a `hold_until` deadline. |
+| **Create reservation** | Validates the request, holds the chosen seats, returns a reservation in state `DRAFT` with a `hold_until` deadline. Only accepted while the screening has not started. |
 | **Confirm reservation** | `DRAFT` -> `CONFIRMED`, only while the hold is still alive. This is the operation that makes the seat definitively sold. |
 | **Cancel reservation** | `DRAFT` or `CONFIRMED` -> `CANCELLED`, allowed until the screening starts. Frees the seats. |
 | **Check availability** | Returns the seat map of a screening, each seat marked free or occupied. |
@@ -80,6 +80,15 @@ This single definition is what both business rules stand on:
 > `hold_until` has not yet passed.
 
 Without the second half, a hold would block nothing and would be decoration.
+
+**This is an exclusivity guarantee, not just a display rule.** At most one reservation may
+hold a seat as a live `DRAFT` or as `CONFIRMED` at any moment — two different viewers must
+never simultaneously hold the same seat, even during the 15-minute window. A viewer who
+requests an already-occupied seat is rejected outright, and the seat does not become
+available to a second viewer until the first viewer's hold expires or is cancelled.
+`create` therefore needs the same kind of race-safety `confirm` already has (ADR-004): a
+`SELECT`-then-insert check alone is not enough here for the same reason it was not enough
+for confirm.
 
 ## State-changing operation
 
