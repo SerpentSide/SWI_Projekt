@@ -12,8 +12,8 @@ interface MovieListProps {
 }
 
 /**
- * Movie rows. Selecting a row expands it to show the poster, description and
- * genres; the parent uses the selection to light up screening days on the
+ * Movie rows. Selecting a row collapses its header to just the title and expands
+ * the poster, description and genres below it; the parent uses the selection to light up screening days on the
  * calendar.
  */
 export function MovieList({ movies, selectedMovieId, onSelectMovie }: MovieListProps) {
@@ -32,7 +32,9 @@ export function MovieList({ movies, selectedMovieId, onSelectMovie }: MovieListP
                 isSelected ? 'bg-brand/10' : 'hover:bg-muted',
               )}
             >
-              <MoviePoster movie={movie} className="w-10" />
+              {/* Collapsed: thumbnail + one-line summary. Expanded: title only - the
+                  poster and details move into the panel below. */}
+              {!isSelected && <MoviePoster movie={movie} className="w-10" />}
               <div className="flex-1">
                 <div
                   className={cn(
@@ -42,10 +44,12 @@ export function MovieList({ movies, selectedMovieId, onSelectMovie }: MovieListP
                 >
                   {movie.title}
                 </div>
-                <div className="text-xs text-muted-foreground">
-                  <MovieFacts movie={movie} />
-                  {movie.genres.length > 0 && ` · ${movie.genres.join(', ')}`}
-                </div>
+                {!isSelected && (
+                  <div className="text-xs text-muted-foreground">
+                    <MovieFacts movie={movie} />
+                    {movie.genres.length > 0 && ` · ${movie.genres.join(', ')}`}
+                  </div>
+                )}
               </div>
               <ChevronDown
                 className={cn(
@@ -65,14 +69,21 @@ export function MovieList({ movies, selectedMovieId, onSelectMovie }: MovieListP
               <div className="overflow-hidden" inert={!isSelected}>
                 <div className="flex gap-4 p-4 pt-0">
                   <MoviePoster movie={movie} className="w-32" />
-                  <div className="space-y-3">
-                    <GenreTags genres={movie.genres} />
-                    <p className="text-sm text-muted-foreground">{movie.description}</p>
-                    <MovieFacts movie={movie} className="block text-sm text-muted-foreground" />
-                    <p className="text-sm text-muted-foreground">
-                      Vyber zvýrazněný den v kalendáři pro výběr promítání.
+                  <div className="flex-1 mt-2">
+                    {/* Metadata first, then a divider, then the description. */}
+                    <div className="space-y-3">
+                      <GenreTags genres={movie.genres} />
+                      <MovieFacts
+                        movie={movie}
+                        className="block text-sm font-medium text-surface-foreground"
+                      />
+                    </div>
+                    <p className="mt-3 border-t border-border pt-3 text-sm leading-relaxed text-muted-foreground">
+                      {movie.description}
                     </p>
-                    <CsfdLink url={movie.csfd_url} />
+                    <div className="mt-3 flex justify-end">
+                      <CsfdLink url={movie.csfd_url} />
+                    </div>
                   </div>
                 </div>
               </div>

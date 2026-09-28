@@ -41,10 +41,14 @@ export function MovieDetail({ movie, date, screenings, onBack }: MovieDetailProp
         <MoviePoster movie={movie} className="w-28" />
         <div className="space-y-2">
           <h2 className="text-xl font-semibold">{movie.title}</h2>
-          <MovieFacts movie={movie} className="block text-sm text-muted-foreground" />
           <GenreTags genres={movie.genres} />
-          <p className="max-w-prose text-sm text-muted-foreground">{movie.description}</p>
-          <CsfdLink url={movie.csfd_url} />
+          <MovieFacts movie={movie} className="block text-sm text-muted-foreground" />
+          <p className="mt-3 max-w-prose border-t border-border pt-3 text-sm text-muted-foreground">
+            {movie.description}
+          </p>
+          <div className="mt-3 flex justify-end">
+            <CsfdLink url={movie.csfd_url} />
+          </div>
         </div>
       </div>
 

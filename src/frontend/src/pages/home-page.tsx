@@ -3,7 +3,6 @@ import * as React from 'react'
 import { MonthCalendar } from '@/components/calendar/month-calendar'
 import { MovieDetail } from '@/components/movies/movie-detail'
 import { MovieList } from '@/components/movies/movie-list'
-import { MoviePoster } from '@/components/movies/movie-poster'
 import { api, type Movie, type Screening } from '@/lib/api'
 import { isSameDay } from '@/lib/calendar'
 
@@ -72,8 +71,8 @@ export function HomePage() {
 
   return (
     <div className="flex h-full gap-6">
-      {/* Fixed left column: calendar, then a featured poster below it. Neither
-          scrolls or moves - only the list on the right does. */}
+      {/* Fixed left column with the calendar. It doesn't scroll or move - only the
+          list on the right does. */}
       <div className="flex w-64 shrink-0 flex-col gap-4">
         <MonthCalendar
           year={year}
@@ -84,8 +83,11 @@ export function HomePage() {
           selectedDate={selectedDate}
           onDayClick={setSelectedDate}
         />
-        {/* Selected movie's poster, else the first one. TODO: rotate through posters. */}
-        <MoviePoster movie={selectedMovie ?? movies[0] ?? null} className="w-full" />
+        {selectedMovie && !selectedDate && (
+          <p className="text-sm text-muted-foreground">
+            Vyber zvýrazněný den v kalendáři pro výběr promítání.
+          </p>
+        )}
       </div>
 
       {/* Full height, scrollable, scrollbar hidden. */}

@@ -36,7 +36,7 @@ export function CsfdLink({ url }: { url: string | null }) {
       onClick={(event) => event.stopPropagation()}
       className="inline-flex items-center gap-1 text-sm font-medium text-brand hover:underline"
     >
-      Zobrazit na ČSFD
+      Více na ČSFD
       <ExternalLink className="h-3.5 w-3.5" />
     </a>
   )
