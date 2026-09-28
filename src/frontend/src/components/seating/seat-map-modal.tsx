@@ -1,27 +1,47 @@
 import * as React from 'react'
 import { X } from 'lucide-react'
 
-import {
-  COLUMN_LETTERS,
-  SEAT_COLS,
-  SEAT_ROWS,
-  generateMockTakenSeats,
-  hasIsolatedFreeSeat,
-  seatId,
-} from '@/lib/seating'
+import { ApiError, api, type Seat } from '@/lib/api'
+import { hasIsolatedFreeSeat } from '@/lib/seating'
 import { cn } from '@/lib/utils'
+import { useAuth } from '@/providers/auth-provider'
 
 interface SeatMapModalProps {
   title: string
   subtitle: string
-  /** Unique per screening (e.g. movie id + date + time) - seeds the mock seat layout. */
-  screeningSeed: string
+  screeningId: number
   onClose: () => void
 }
 
-export function SeatMapModal({ title, subtitle, screeningSeed, onClose }: SeatMapModalProps) {
-  const takenSeats = React.useMemo(() => generateMockTakenSeats(screeningSeed), [screeningSeed])
-  const [selectedSeats, setSelectedSeats] = React.useState<Set<string>>(new Set())
+/** Groups the hall's seats into rows (by row label), each sorted left-to-right. */
+function groupRows(seats: Seat[]): [string, Seat[]][] {
+  const rows = new Map<string, Seat[]>()
+  for (const seat of seats) {
+    const row = rows.get(seat.row_label) ?? []
+    row.push(seat)
+    rows.set(seat.row_label, row)
+  }
+  return Array.from(rows.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([label, row]) => [label, row.sort((a, b) => a.seat_number - b.seat_number)])
+}
+
+export function SeatMapModal({ title, subtitle, screeningId, onClose }: SeatMapModalProps) {
+  const { user } = useAuth()
+  const [seats, setSeats] = React.useState<Seat[] | null>(null)
+  const [selectedSeats, setSelectedSeats] = React.useState<Set<number>>(new Set())
+  const [isSubmitting, setIsSubmitting] = React.useState(false)
+  const [serverError, setServerError] = React.useState<string | null>(null)
+  const [reserved, setReserved] = React.useState(false)
+
+  const loadSeats = React.useCallback(() => {
+    api
+      .availability(screeningId)
+      .then((data) => setSeats(data.seats))
+      .catch(() => setServerError('Nepodařilo se načíst sedadla.'))
+  }, [screeningId])
+
+  React.useEffect(loadSeats, [loadSeats])
 
   React.useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -31,43 +51,69 @@ export function SeatMapModal({ title, subtitle, screeningSeed, onClose }: SeatMa
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
 
+  const rows = React.useMemo(() => groupRows(seats ?? []), [seats])
+  const seatNumbers = rows[0]?.[1].map((s) => s.seat_number) ?? []
+  const gridStyle = { gridTemplateColumns: `1.5rem repeat(${seatNumbers.length}, 1.75rem)` }
+
   // Checked against the whole selection rather than blocking each click - two
   // seats that each look "isolated" on their own can be picked together fine
   // (e.g. both sides of a gap), so this can only be judged once both are picked.
-  const invalidRows = React.useMemo(() => {
-    const rows = new Set<number>()
-    for (let row = 1; row <= SEAT_ROWS; row++) {
-      const rowOccupied = Array.from(
-        { length: SEAT_COLS },
-        (_, c) => takenSeats.has(seatId(row, c)) || selectedSeats.has(seatId(row, c)),
-      )
-      if (hasIsolatedFreeSeat(rowOccupied)) rows.add(row)
-    }
-    return rows
-  }, [takenSeats, selectedSeats])
+  const invalidRows = React.useMemo(
+    () =>
+      rows
+        .filter(([, row]) =>
+          hasIsolatedFreeSeat(row.map((s) => s.occupied || selectedSeats.has(s.id))),
+        )
+        .map(([label]) => label),
+    [rows, selectedSeats],
+  )
 
-  const canReserve = selectedSeats.size > 0 && invalidRows.size === 0
+  const canReserve =
+    !reserved && !isSubmitting && selectedSeats.size > 0 && invalidRows.length === 0
 
-  function handleToggleSeat(row: number, col: number) {
-    const id = seatId(row, col)
-    if (takenSeats.has(id)) return
-
+  function handleToggleSeat(seat: Seat) {
+    if (seat.occupied || reserved) return
+    setServerError(null)
     setSelectedSeats((current) => {
       const next = new Set(current)
-      if (next.has(id)) {
-        next.delete(id)
+      if (next.has(seat.id)) {
+        next.delete(seat.id)
       } else {
-        next.add(id)
+        next.add(seat.id)
       }
       return next
     })
   }
 
-  function handleReserve() {
-    if (!canReserve) return
-    // TODO: replace with a real POST /reservations once the backend exists.
-    onClose()
+  async function handleReserve() {
+    if (!canReserve || !user) return
+    setIsSubmitting(true)
+    setServerError(null)
+    try {
+      // No payment step yet, so the hold is confirmed straight away.
+      const { reservation_id } = await api.createReservation(
+        user.user_id,
+        screeningId,
+        Array.from(selectedSeats),
+      )
+      await api.confirmReservation(reservation_id)
+      setReserved(true)
+    } catch (err) {
+      setServerError(err instanceof ApiError ? err.message : 'Rezervace se nezdařila.')
+      setSelectedSeats(new Set())
+    } finally {
+      setIsSubmitting(false)
+      loadSeats()
+    }
   }
+
+  const message = serverError
+    ? serverError
+    : reserved
+      ? `Rezervace potvrzena (${selectedSeats.size} ${selectedSeats.size === 1 ? 'sedadlo' : 'sedadla'}).`
+      : invalidRows.length > 0
+        ? `Tento výběr by nechal osamocené volné sedadlo v řadě ${invalidRows.join(', ')} - uprav výběr, než budeš moct rezervovat.`
+        : null
 
   return (
     <div
@@ -99,45 +145,45 @@ export function SeatMapModal({ title, subtitle, screeningSeed, onClose }: SeatMa
           <LegendItem colorClassName="bg-brand" label="Vybrané" />
         </div>
 
-        <div className="inline-block">
-          <div className="mb-1 grid grid-cols-[1.5rem_repeat(10,1.75rem)] gap-1">
-            <div />
-            {COLUMN_LETTERS.map((letter) => (
-              <div
-                key={letter}
-                className="flex h-6 items-center justify-center text-xs font-medium uppercase text-muted-foreground"
-              >
-                {letter}
-              </div>
-            ))}
-          </div>
-
-          {Array.from({ length: SEAT_ROWS }, (_, rowIndex) => {
-            const row = rowIndex + 1
-            return (
-              <div key={row} className="mb-1 grid grid-cols-[1.5rem_repeat(10,1.75rem)] gap-1">
-                <div className="flex h-7 items-center justify-center text-xs font-medium text-muted-foreground">
-                  {row}
+        {seats === null ? (
+          <p className="text-sm text-muted-foreground">Načítání…</p>
+        ) : (
+          <div className="inline-block">
+            <div className="mb-1 grid gap-1" style={gridStyle}>
+              <div />
+              {seatNumbers.map((number) => (
+                <div
+                  key={number}
+                  className="flex h-6 items-center justify-center text-xs font-medium text-muted-foreground"
+                >
+                  {number}
                 </div>
-                {Array.from({ length: SEAT_COLS }, (_, col) => {
-                  const id = seatId(row, col)
-                  const isTaken = takenSeats.has(id)
-                  const isSelected = selectedSeats.has(id)
+              ))}
+            </div>
 
+            {rows.map(([label, row]) => (
+              <div key={label} className="mb-1 grid gap-1" style={gridStyle}>
+                <div className="flex h-7 items-center justify-center text-xs font-medium text-muted-foreground">
+                  {label}
+                </div>
+                {row.map((seat) => {
+                  const isSelected = selectedSeats.has(seat.id)
+                  const name = `${seat.row_label}${seat.seat_number}`
                   return (
                     <button
-                      key={id}
+                      key={seat.id}
                       type="button"
-                      disabled={isTaken}
-                      aria-label={`Sedadlo ${id}${isTaken ? ' (zabrané)' : ''}`}
-                      onClick={() => handleToggleSeat(row, col)}
+                      disabled={seat.occupied}
+                      aria-label={`Sedadlo ${name}${seat.occupied ? ' (zabrané)' : ''}`}
+                      onClick={() => handleToggleSeat(seat)}
                       className={cn(
                         'h-7 w-7 rounded-DEFAULT text-[10px] font-medium transition-colors',
-                        isTaken && 'cursor-not-allowed bg-destructive text-destructive-foreground',
-                        !isTaken &&
+                        seat.occupied &&
+                          'cursor-not-allowed bg-destructive text-destructive-foreground',
+                        !seat.occupied &&
                           isSelected &&
                           'bg-brand text-brand-foreground hover:bg-brand-dark',
-                        !isTaken &&
+                        !seat.occupied &&
                           !isSelected &&
                           'bg-muted text-muted-foreground hover:bg-muted-foreground/30',
                       )}
@@ -145,37 +191,48 @@ export function SeatMapModal({ title, subtitle, screeningSeed, onClose }: SeatMa
                   )
                 })}
               </div>
-            )
-          })}
-        </div>
+            ))}
+          </div>
+        )}
 
         {/* Always mounted at a fixed height, just hidden when there's nothing to say -
             otherwise the message appearing/disappearing resizes the modal and it
             jumps around (it's centered on screen). */}
         <p
           className={cn(
-            'mt-3 min-h-10 text-sm text-destructive',
-            invalidRows.size === 0 && 'invisible',
+            'mt-3 min-h-10 max-w-80 text-sm',
+            reserved && !serverError ? 'text-brand' : 'text-destructive',
+            !message && 'invisible',
           )}
         >
-          Tento výběr by nechal osamocené volné sedadlo v řadě{' '}
-          {Array.from(invalidRows).sort((a, b) => a - b).join(', ')} - uprav výběr, než budeš
-          moct rezervovat.
+          {message}
         </p>
 
-        <button
-          type="button"
-          disabled={!canReserve}
-          onClick={handleReserve}
-          className={cn(
-            'mt-4 w-full rounded-DEFAULT py-2 text-sm font-medium transition-colors',
-            canReserve
-              ? 'cursor-pointer bg-brand text-brand-foreground hover:bg-brand-dark'
-              : 'cursor-not-allowed bg-muted text-muted-foreground',
-          )}
-        >
-          Rezervovat{selectedSeats.size > 0 ? ` (${selectedSeats.size})` : ''}
-        </button>
+        {reserved ? (
+          <button
+            type="button"
+            onClick={onClose}
+            className="mt-4 w-full rounded-DEFAULT bg-brand py-2 text-sm font-medium text-brand-foreground hover:bg-brand-dark"
+          >
+            Hotovo
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={!canReserve}
+            onClick={handleReserve}
+            className={cn(
+              'mt-4 w-full rounded-DEFAULT py-2 text-sm font-medium transition-colors',
+              canReserve
+                ? 'cursor-pointer bg-brand text-brand-foreground hover:bg-brand-dark'
+                : 'cursor-not-allowed bg-muted text-muted-foreground',
+            )}
+          >
+            {isSubmitting
+              ? 'Rezervuji…'
+              : `Rezervovat${selectedSeats.size > 0 ? ` (${selectedSeats.size})` : ''}`}
+          </button>
+        )}
       </div>
     </div>
   )

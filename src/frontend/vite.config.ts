@@ -10,4 +10,13 @@ export default defineConfig({
       '@': path.resolve(import.meta.dirname, './src'),
     },
   },
+  server: {
+    proxy: {
+      // FastAPI backend: `uvicorn cinema.main:app --app-dir src` from the repo root.
+      '/api': {
+        target: 'http://localhost:8000',
+        rewrite: (p) => p.replace(/^\/api/, ''),
+      },
+    },
+  },
 })

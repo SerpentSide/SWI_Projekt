@@ -17,6 +17,7 @@ export function LoginPage() {
   const [email, setEmail] = React.useState('')
   const [password, setPassword] = React.useState('')
   const [isSubmitting, setIsSubmitting] = React.useState(false)
+  const [error, setError] = React.useState<string | null>(null)
 
   if (isAuthenticated) {
     const from = (location.state as LocationState | null)?.from?.pathname ?? '/'
@@ -26,10 +27,13 @@ export function LoginPage() {
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
     setIsSubmitting(true)
+    setError(null)
     try {
       await login(email, password)
       const from = (location.state as LocationState | null)?.from?.pathname ?? '/'
       navigate(from, { replace: true })
+    } catch {
+      setError('Přihlášení se nepodařilo - běží backend?')
     } finally {
       setIsSubmitting(false)
     }
@@ -84,8 +88,10 @@ export function LoginPage() {
           {isSubmitting ? 'Přihlašování…' : 'Přihlásit se'}
         </Button>
 
+        {error && <p className="text-center text-sm text-destructive">{error}</p>}
+
         <p className="text-center text-xs text-muted-foreground">
-          Backend ještě neexistuje — jakékoli přihlašovací údaje tě zatím přihlásí.
+          Hesla se zatím neověřují — stačí e-mail, účet se vytvoří při prvním přihlášení.
         </p>
       </form>
     </div>

@@ -1,18 +1,20 @@
 import { ChevronDown } from 'lucide-react'
 
+import { CsfdLink, GenreTags, MovieFacts } from '@/components/movies/movie-meta'
+import { MoviePoster } from '@/components/movies/movie-poster'
 import { cn } from '@/lib/utils'
-import type { MockMovie } from '@/data/mock-movies'
+import type { Movie } from '@/lib/api'
 
 interface MovieListProps {
-  movies: MockMovie[]
-  selectedMovieId: string | null
-  onSelectMovie: (movieId: string) => void
+  movies: Movie[]
+  selectedMovieId: number | null
+  onSelectMovie: (movieId: number) => void
 }
 
 /**
- * Placeholder movie rows. Selecting a row expands it to show a bigger poster
- * placeholder; the parent uses the selection to light up screening days on
- * the calendar above.
+ * Movie rows. Selecting a row expands it to show the poster, description and
+ * genres; the parent uses the selection to light up screening days on the
+ * calendar.
  */
 export function MovieList({ movies, selectedMovieId, onSelectMovie }: MovieListProps) {
   return (
@@ -30,17 +32,21 @@ export function MovieList({ movies, selectedMovieId, onSelectMovie }: MovieListP
                 isSelected ? 'bg-brand/10' : 'hover:bg-muted',
               )}
             >
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-DEFAULT border border-dashed border-muted-foreground/40 text-[10px] text-muted-foreground">
-                plakát
+              <MoviePoster movie={movie} className="w-10" />
+              <div className="flex-1">
+                <div
+                  className={cn(
+                    'text-sm font-medium',
+                    isSelected ? 'text-brand' : 'text-surface-foreground',
+                  )}
+                >
+                  {movie.title}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  <MovieFacts movie={movie} />
+                  {movie.genres.length > 0 && ` · ${movie.genres.join(', ')}`}
+                </div>
               </div>
-              <span
-                className={cn(
-                  'flex-1 text-sm font-medium',
-                  isSelected ? 'text-brand' : 'text-surface-foreground',
-                )}
-              >
-                {movie.title}
-              </span>
               <ChevronDown
                 className={cn(
                   'h-4 w-4 shrink-0 text-muted-foreground transition-transform',
@@ -56,15 +62,18 @@ export function MovieList({ movies, selectedMovieId, onSelectMovie }: MovieListP
                 isSelected ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
               )}
             >
-              <div className="overflow-hidden">
+              <div className="overflow-hidden" inert={!isSelected}>
                 <div className="flex gap-4 p-4 pt-0">
-                  <div className="flex h-48 w-32 shrink-0 items-center justify-center rounded-DEFAULT border border-dashed border-muted-foreground/40 text-xs text-muted-foreground">
-                    plakát
+                  <MoviePoster movie={movie} className="w-32" />
+                  <div className="space-y-3">
+                    <GenreTags genres={movie.genres} />
+                    <p className="text-sm text-muted-foreground">{movie.description}</p>
+                    <MovieFacts movie={movie} className="block text-sm text-muted-foreground" />
+                    <p className="text-sm text-muted-foreground">
+                      Vyber zvýrazněný den v kalendáři pro výběr promítání.
+                    </p>
+                    <CsfdLink url={movie.csfd_url} />
                   </div>
-                  <p className="text-sm text-muted-foreground">
-                    Zatím placeholder — popis filmu, délka a další detaily přijdou, až
-                    bude API.
-                  </p>
                 </div>
               </div>
             </div>
