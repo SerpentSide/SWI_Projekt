@@ -13,6 +13,7 @@ from collections import defaultdict
 from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, date as Date, datetime, time, timedelta
 from pathlib import Path
+from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -100,17 +101,22 @@ def now() -> str:
 
 # The ONE place that defines "occupied" (ADR-003): confirmed, or a draft whose hold
 # is still running. Every availability check goes through this.
+# v0.2: a reservation waiting for approval also blocks its seats, until the screening starts.
 OCCUPIED_SEATS_SQL = """
     SELECT rs.seat_id
     FROM reservation_seats rs
     JOIN reservations r ON r.id = rs.reservation_id
+    JOIN screenings sc ON sc.id = r.screening_id
     WHERE rs.screening_id = ?
-      AND (r.state = 'CONFIRMED' OR (r.state = 'DRAFT' AND r.hold_until > ?))
+      AND (r.state = 'CONFIRMED'
+           OR (r.state = 'DRAFT' AND r.hold_until > ?)
+           OR (r.state = 'PENDING_APPROVAL' AND sc.starts_at > ?))
 """
 
 
 def occupied_seat_ids(db, screening_id: int) -> set[int]:
-    return {row["seat_id"] for row in db.execute(OCCUPIED_SEATS_SQL, (screening_id, now()))}
+    at = now()
+    return {row["seat_id"] for row in db.execute(OCCUPIED_SEATS_SQL, (screening_id, at, at))}
 
 
 def set_state(db, reservation_id: int, state: str, timestamp_column: str | None = None) -> None:
@@ -159,11 +165,36 @@ def is_expired(reservation: dict) -> bool:
     return reservation["state"] == "DRAFT" and reservation["hold_until"] <= now()
 
 
+def effective_state(db, reservation: dict) -> str:
+    """The state as a client sees it: expiry is derived, never stored by a read (ADR-003).
+
+    A DRAFT past its hold, or a PENDING_APPROVAL whose screening has started, reads as EXPIRED."""
+    if is_expired(reservation):
+        return "EXPIRED"
+    if reservation["state"] == "PENDING_APPROVAL":
+        screening = get_screening_or_404(db, reservation["screening_id"])
+        if screening["starts_at"] <= now():
+            return "EXPIRED"
+    return reservation["state"]
+
+
+def needs_approval(db, reservation_id: int) -> bool:
+    return db.execute(
+        """SELECT 1 FROM reservation_seats rs JOIN seats s ON s.id = rs.seat_id
+           WHERE rs.reservation_id = ? AND s.requires_approval = 1""",
+        (reservation_id,),
+    ).fetchone() is not None
+
+
 # --- schemas ----------------------------------------------------------------
 
 
 class LoginIn(BaseModel):
     email: str
+
+
+class DecisionIn(BaseModel):
+    decision: Literal["approve", "reject"]
 
 
 class ReservationIn(BaseModel):
@@ -284,8 +315,7 @@ def create_reservation(body: ReservationIn, db=Depends(get_db)):
 @app.get("/reservations/{reservation_id}")
 def get_reservation(reservation_id: int, db=Depends(get_db)):
     reservation = get_reservation_or_404(db, reservation_id)
-    if is_expired(reservation):  # lazy expiry (ADR-003)
-        reservation["state"] = "EXPIRED"
+    reservation["state"] = effective_state(db, reservation)  # lazy expiry (ADR-003)
     reservation["seats"] = db.execute(
         """SELECT s.id, s.row_label, s.seat_number
            FROM reservation_seats rs JOIN seats s ON s.id = rs.seat_id
@@ -301,14 +331,14 @@ def list_user_reservations(user_id: int, db=Depends(get_db)):
         "SELECT * FROM reservations WHERE user_id = ? ORDER BY created_at DESC", (user_id,)
     ).fetchall()
     for r in reservations:
-        if is_expired(r):
-            r["state"] = "EXPIRED"
+        r["state"] = effective_state(db, r)
     return reservations
 
 
 @app.post("/reservations/{reservation_id}/confirm")
 def confirm_reservation(reservation_id: int, db=Depends(get_db)):
     expired = False
+    new_state = "CONFIRMED"
     try:
         with write_tx(db):
             reservation = get_reservation_or_404(db, reservation_id)
@@ -317,26 +347,50 @@ def confirm_reservation(reservation_id: int, db=Depends(get_db)):
                 expired = True
             elif reservation["state"] != "DRAFT":
                 raise HTTPException(409, f"Cannot confirm a {reservation['state']} reservation")
+            elif needs_approval(db, reservation_id):  # v0.2: wait for a box office decision
+                new_state = "PENDING_APPROVAL"
+                set_state(db, reservation_id, new_state)
             else:
-                set_state(db, reservation_id, "CONFIRMED", "confirmed_at")
+                set_state(db, reservation_id, new_state, "confirmed_at")
     except sqlite3.IntegrityError:  # the DB invariant (ADR-004)
         raise HTTPException(409, "One of the seats was just confirmed by someone else")
     if expired:  # raised after the commit, so the EXPIRED state is kept
         raise HTTPException(409, "Reservation hold has expired")
-    return {"reservation_id": reservation_id, "state": "CONFIRMED"}
+    return {"reservation_id": reservation_id, "state": new_state}
 
 
 @app.post("/reservations/{reservation_id}/cancel")
 def cancel_reservation(reservation_id: int, db=Depends(get_db)):
     with write_tx(db):
         reservation = get_reservation_or_404(db, reservation_id)
-        if reservation["state"] not in ("DRAFT", "CONFIRMED") or is_expired(reservation):
+        if reservation["state"] not in ("DRAFT", "PENDING_APPROVAL", "CONFIRMED") or is_expired(reservation):
             raise HTTPException(409, "Only active reservations can be cancelled")
         screening = get_screening_or_404(db, reservation["screening_id"])
         if screening["starts_at"] <= now():  # BR-03: DRAFT and CONFIRMED alike
             raise HTTPException(409, "The screening has already started")
         set_state(db, reservation_id, "CANCELLED", "cancelled_at")
     return {"reservation_id": reservation_id, "state": "CANCELLED"}
+
+
+@app.post("/reservations/{reservation_id}/decision")
+def decide_reservation(reservation_id: int, body: DecisionIn, db=Depends(get_db)):
+    """v0.2 OP-05: a box office operator approves or rejects a PENDING_APPROVAL reservation.
+
+    Who counts as an operator is not checked yet - the application has no roles (left for C03)."""
+    try:
+        with write_tx(db):
+            reservation = get_reservation_or_404(db, reservation_id)
+            if reservation["state"] != "PENDING_APPROVAL":
+                raise HTTPException(409, f"Cannot decide a {effective_state(db, reservation)} reservation")
+            if get_screening_or_404(db, reservation["screening_id"])["starts_at"] <= now():
+                raise HTTPException(409, "The screening has started, the approval has expired")
+            if body.decision == "approve":
+                set_state(db, reservation_id, "CONFIRMED", "confirmed_at")
+            else:
+                set_state(db, reservation_id, "REJECTED")
+    except sqlite3.IntegrityError:  # the DB invariant (ADR-004)
+        raise HTTPException(409, "One of the seats was just confirmed by someone else")
+    return {"reservation_id": reservation_id, "state": "CONFIRMED" if body.decision == "approve" else "REJECTED"}
 
 
 if __name__ == "__main__":  # PYTHONPATH=src python -m cinema.main  -> wipe DB, reseed

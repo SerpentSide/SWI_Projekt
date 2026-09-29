@@ -28,7 +28,7 @@ Team decisions this analysis rests on:
 | Cancel | Can `PENDING_APPROVAL` be cancelled? | **Yes**, until the screening starts, like the other live states (BR-03). Frees the seats. |
 | State diagram | Which states are needed? | Add **`PENDING_APPROVAL`** and **`REJECTED`**. Undecided-at-start reads as the existing **`EXPIRED`**. New terminal states: `REJECTED`. |
 | Use-case diagram | New actor or goal? | New goal **Approve Reservation** for the existing **Box office operator**. No new actor. |
-| Verification | How do we check delay, rejection, expiry and their effect on availability? | New examples in OP-05 and OP-03/OP-04: delayed approval keeps seats occupied for hours; reject frees them; approval after `starts_at` → `409` and the reservation reads `EXPIRED`; approve vs cancel race → exactly one wins. |
+| Verification | How do we check delay, rejection, expiry and their effect on availability? | New examples in OP-05 and OP-03/OP-04: delayed approval keeps seats occupied for hours; reject frees them; approval after `starts_at` → `409` and the reservation reads `EXPIRED`; approve vs cancel race → Cancel always succeeds, the reservation always ends `CANCELLED`. |
 | Architecture | New driver for persistence, timers, notifications? | **Yes** — see the drivers below. |
 
 ## Dopad změny C02

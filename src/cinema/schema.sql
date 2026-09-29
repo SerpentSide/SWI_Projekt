@@ -40,6 +40,8 @@ CREATE TABLE seats (
     hall_id     INTEGER NOT NULL REFERENCES halls (id),
     row_label   TEXT    NOT NULL,
     seat_number INTEGER NOT NULL,
+    -- v0.2: a reservation holding any such seat waits for a box office decision at confirm.
+    requires_approval INTEGER NOT NULL DEFAULT 0 CHECK (requires_approval IN (0, 1)),
     UNIQUE (hall_id, row_label, seat_number)
 );
 
@@ -57,7 +59,7 @@ CREATE TABLE reservations (
     user_id      INTEGER NOT NULL REFERENCES users (id),
     screening_id INTEGER NOT NULL REFERENCES screenings (id),
     state        TEXT    NOT NULL DEFAULT 'DRAFT'
-                 CHECK (state IN ('DRAFT', 'CONFIRMED', 'CANCELLED', 'EXPIRED')),
+                 CHECK (state IN ('DRAFT', 'PENDING_APPROVAL', 'CONFIRMED', 'REJECTED', 'CANCELLED', 'EXPIRED')),
     hold_until   TEXT    NOT NULL,
     created_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     confirmed_at TEXT,
@@ -76,7 +78,7 @@ CREATE TABLE reservation_seats (
     seat_id        INTEGER NOT NULL REFERENCES seats (id),
     screening_id   INTEGER NOT NULL REFERENCES screenings (id),
     state          TEXT    NOT NULL
-                   CHECK (state IN ('DRAFT', 'CONFIRMED', 'CANCELLED', 'EXPIRED')),
+                   CHECK (state IN ('DRAFT', 'PENDING_APPROVAL', 'CONFIRMED', 'REJECTED', 'CANCELLED', 'EXPIRED')),
     PRIMARY KEY (reservation_id, seat_id)
 );
 

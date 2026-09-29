@@ -17,11 +17,20 @@ import cinema.main
 from cinema.main import app, connect, reset_db
 from cinema.seed import iso
 
+def no_approval_seats() -> None:
+    """The demo data has a VIP row needing approval; most tests want plain v0.1 seats."""
+    conn = connect()
+    try:
+        conn.execute("UPDATE seats SET requires_approval = 0")
+    finally:
+        conn.close()
+
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(cinema.main, "DB_PATH", tmp_path / "cinema.sqlite3")
     reset_db()
+    no_approval_seats()  # tests opt in to approval seats explicitly (v0.2)
     with TestClient(app) as c:
         yield c
 
@@ -340,3 +349,159 @@ class TestCancel:
         rid = plant(screening, user, row_seats()[:2])
         assert client.post(f"/reservations/{rid}/cancel").status_code == 409
         assert stored(rid)[0] == "DRAFT"
+
+
+# --- v0.2: seats that require approval (OP-03 variant, OP-05, OP-04, OP-02) ----------
+
+
+def require_approval(seat_ids) -> None:
+    conn = connect()
+    try:
+        conn.executemany("UPDATE seats SET requires_approval = 1 WHERE id = ?", [(s,) for s in seat_ids])
+    finally:
+        conn.close()
+
+
+def decide(client, reservation_id, decision):
+    return client.post(f"/reservations/{reservation_id}/decision", json={"decision": decision})
+
+
+def pending(client, hours_ahead=3, row=0):
+    """A PENDING_APPROVAL reservation reached the honest way: create, then confirm on a VIP seat."""
+    user, screening = login(client), make_screening(timedelta(hours=hours_ahead))
+    seats = row_seats(row=row)[:2]
+    require_approval(seats)
+    rid = create(client, user, screening, seats).json()["reservation_id"]
+    assert client.post(f"/reservations/{rid}/confirm").json()["state"] == "PENDING_APPROVAL"
+    return rid, screening, seats
+
+
+class TestConfirmNeedingApproval:
+    def test_confirm_on_a_vip_seat_waits_for_a_decision(self, client):
+        rid, screening, seats = pending(client)
+        assert stored(rid) == ("PENDING_APPROVAL", ["PENDING_APPROVAL", "PENDING_APPROVAL"])
+        conn = connect()
+        assert conn.execute("SELECT confirmed_at FROM reservations WHERE id = ?", (rid,)).fetchone()["confirmed_at"] is None
+        conn.close()
+
+    def test_one_vip_seat_among_ordinary_ones_is_enough(self, client):
+        user, screening = login(client), make_screening(timedelta(hours=3))
+        seats = row_seats()[:3]
+        require_approval([seats[2]])
+        rid = create(client, user, screening, seats).json()["reservation_id"]
+        assert client.post(f"/reservations/{rid}/confirm").json()["state"] == "PENDING_APPROVAL"
+
+    def test_ordinary_seats_still_confirm_straight_away(self, client):
+        user, screening = login(client), make_screening(timedelta(hours=3))
+        require_approval(row_seats(row=5))  # some other row needs approval, not this one
+        rid = create(client, user, screening, row_seats()[:2]).json()["reservation_id"]
+        assert client.post(f"/reservations/{rid}/confirm").json()["state"] == "CONFIRMED"
+
+    def test_confirm_again_on_a_pending_reservation_is_409(self, client):
+        rid, *_ = pending(client)
+        assert client.post(f"/reservations/{rid}/confirm").status_code == 409
+
+    def test_pending_seats_stay_occupied_far_past_the_15_minute_hold(self, client):
+        """Spec OP-05 delayed approval: the pending state is not on the hold clock."""
+        rid, screening, seats = pending(client)
+        conn = connect()
+        conn.execute("UPDATE reservations SET hold_until = ? WHERE id = ?", (utc(-timedelta(hours=5)), rid))
+        conn.close()
+        assert occupied_ids(client, screening) == set(seats)
+        assert client.get(f"/reservations/{rid}").json()["state"] == "PENDING_APPROVAL"
+
+    def test_pending_seats_cannot_be_taken_by_someone_else(self, client):
+        rid, screening, seats = pending(client)
+        other = login(client, "other@example.com")
+        assert create(client, other, screening, seats).status_code == 409
+
+    def test_pending_reservation_of_a_started_screening_reads_as_expired_and_is_free(self, client):
+        user, screening = login(client), make_screening(-timedelta(minutes=1))
+        seats = row_seats()[:2]
+        rid = plant(screening, user, seats, state="PENDING_APPROVAL")
+        assert client.get(f"/reservations/{rid}").json()["state"] == "EXPIRED"
+        assert occupied_ids(client, screening) == set()
+
+
+class TestApprove:
+    def test_approve_confirms_the_reservation_and_its_seats(self, client):
+        rid, screening, seats = pending(client)
+        resp = decide(client, rid, "approve")
+        assert resp.status_code == 200 and resp.json()["state"] == "CONFIRMED"
+        assert stored(rid) == ("CONFIRMED", ["CONFIRMED", "CONFIRMED"])
+        conn = connect()
+        assert conn.execute("SELECT confirmed_at FROM reservations WHERE id = ?", (rid,)).fetchone()["confirmed_at"]
+        conn.close()
+        assert occupied_ids(client, screening) == set(seats)
+
+    def test_deciding_twice_is_409(self, client):
+        rid, *_ = pending(client)
+        assert decide(client, rid, "approve").status_code == 200
+        assert decide(client, rid, "approve").status_code == 409
+
+    def test_reject_frees_the_seats_and_keeps_the_row(self, client):
+        rid, screening, seats = pending(client)
+        resp = decide(client, rid, "reject")
+        assert resp.status_code == 200 and resp.json()["state"] == "REJECTED"
+        assert stored(rid) == ("REJECTED", ["REJECTED", "REJECTED"])
+        assert occupied_ids(client, screening) == set()
+        assert client.get(f"/reservations/{rid}").json()["state"] == "REJECTED"
+        assert decide(client, rid, "approve").status_code == 409
+
+    def test_unknown_reservation_is_404(self, client):
+        assert decide(client, 99999, "approve").status_code == 404
+
+    def test_decision_must_be_approve_or_reject(self, client):
+        rid, *_ = pending(client)
+        assert decide(client, rid, "maybe").status_code == 422
+        assert stored(rid)[0] == "PENDING_APPROVAL"
+
+    def test_a_draft_cannot_be_decided(self, client):
+        user, screening = login(client), make_screening(timedelta(hours=3))
+        rid = create(client, user, screening, row_seats()[:2]).json()["reservation_id"]
+        assert decide(client, rid, "approve").status_code == 409
+        assert stored(rid)[0] == "DRAFT"
+
+    def test_approval_after_the_screening_started_is_409_and_reads_expired(self, client):
+        user, screening = login(client), make_screening(-timedelta(minutes=1))
+        rid = plant(screening, user, row_seats()[:2], state="PENDING_APPROVAL")
+        assert decide(client, rid, "approve").status_code == 409
+        assert stored(rid)[0] == "PENDING_APPROVAL"
+        assert client.get(f"/reservations/{rid}").json()["state"] == "EXPIRED"
+
+    def test_approval_that_collides_with_a_confirmed_seat_confirms_nothing(self, client):
+        """The unique index stays the authority even if pending seats were somehow not blocked."""
+        alice, bob = login(client, "a@example.com"), login(client, "b@example.com")
+        screening = make_screening(timedelta(hours=3))
+        seats = row_seats()[:2]
+        mine = plant(screening, alice, seats, state="PENDING_APPROVAL")
+        plant(screening, bob, [seats[1]], state="CONFIRMED")
+        assert decide(client, mine, "approve").status_code == 409
+        assert stored(mine) == ("PENDING_APPROVAL", ["PENDING_APPROVAL", "PENDING_APPROVAL"])
+
+    def test_approve_and_cancel_arriving_together_always_end_cancelled(self, client):
+        """Approve-then-cancel and cancel-then-approve are both legal orders; the end state is not."""
+        for attempt in range(15):
+            rid, screening, _ = pending(client, hours_ahead=3 + attempt, row=attempt % 10)
+            approve_code, cancel_code = race(
+                lambda: decide(TestClient(app), rid, "approve").status_code,
+                lambda: TestClient(app).post(f"/reservations/{rid}/cancel").status_code,
+            )
+            assert cancel_code == 200, f"attempt {attempt}"
+            assert approve_code in (200, 409), f"attempt {attempt}"
+            assert stored(rid) == ("CANCELLED", ["CANCELLED", "CANCELLED"]), f"attempt {attempt}"
+            assert occupied_ids(client, screening) == set()
+
+
+class TestCancelPending:
+    def test_pending_can_be_cancelled_and_seats_are_free_again(self, client):
+        rid, screening, _ = pending(client)
+        assert client.post(f"/reservations/{rid}/cancel").status_code == 200
+        assert stored(rid) == ("CANCELLED", ["CANCELLED", "CANCELLED"])
+        assert occupied_ids(client, screening) == set()
+        assert decide(client, rid, "approve").status_code == 409
+
+    def test_rejected_cannot_be_cancelled(self, client):
+        rid, *_ = pending(client)
+        decide(client, rid, "reject")
+        assert client.post(f"/reservations/{rid}/cancel").status_code == 409

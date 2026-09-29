@@ -208,8 +208,7 @@ flowchart TD
 ## 4. Consistency check
 
 Each edge of the state diagram, traced to the text and to an executed test
-(`tests/test_c02_operations.py`). Rows for v0.2 have **no test yet**: the application has not been
-changed for v0.2, so those examples are written but not run.
+(`tests/test_c02_operations.py`). Rows for v0.2 are run too, except the `403` row, which needs roles (C03).
 
 | Transition / rule | Spec | Test |
 |---|---|---|
@@ -225,11 +224,11 @@ changed for v0.2, so those examples are written but not run.
 | one winner among concurrent creates | BR-02, OP-01 | `TestCreate::test_two_simultaneous_creates_on_one_seat_give_exactly_one_201` |
 | one winner among concurrent confirms | BR-02, OP-03 | `TestConfirm::test_two_simultaneous_confirms_on_one_seat_give_exactly_one_200` |
 | confirm is all-or-nothing | OP-03 | `TestConfirm::test_multi_seat_conflict_leaves_no_seat_confirmed` |
-| `DRAFT → PENDING_APPROVAL` *(v0.2)* | OP-03 variant | *not yet written* |
-| pending seats read `occupied` for hours *(v0.2)* | OP-02, OP-05 | *not yet written* |
-| `PENDING_APPROVAL → CONFIRMED` *(v0.2)* | OP-05 | *not yet written* |
-| `PENDING_APPROVAL → REJECTED`, seats freed *(v0.2)* | OP-05 | *not yet written* |
-| `PENDING_APPROVAL → CANCELLED` *(v0.2)* | OP-04 | *not yet written* |
-| `PENDING_APPROVAL → EXPIRED` at `starts_at` *(v0.2)* | OP-05 | *not yet written* |
-| approve versus cancel race: one winner *(v0.2)* | OP-05 | *not yet written* |
-| non-operator decision → `403` *(v0.2)* | OP-05 | *not yet written* |
+| `DRAFT → PENDING_APPROVAL` *(v0.2)* | OP-03 variant | `TestConfirmNeedingApproval::test_confirm_on_a_vip_seat_waits_for_a_decision`, `::test_one_vip_seat_among_ordinary_ones_is_enough`, `::test_ordinary_seats_still_confirm_straight_away` |
+| pending seats read `occupied` for hours *(v0.2)* | OP-02, OP-05 | `TestConfirmNeedingApproval::test_pending_seats_stay_occupied_far_past_the_15_minute_hold`, `::test_pending_seats_cannot_be_taken_by_someone_else` |
+| `PENDING_APPROVAL → CONFIRMED` *(v0.2)* | OP-05 | `TestApprove::test_approve_confirms_the_reservation_and_its_seats`, `::test_deciding_twice_is_409`, `::test_approval_that_collides_with_a_confirmed_seat_confirms_nothing` |
+| `PENDING_APPROVAL → REJECTED`, seats freed *(v0.2)* | OP-05 | `TestApprove::test_reject_frees_the_seats_and_keeps_the_row`, `TestCancelPending::test_rejected_cannot_be_cancelled` |
+| `PENDING_APPROVAL → CANCELLED` *(v0.2)* | OP-04 | `TestCancelPending::test_pending_can_be_cancelled_and_seats_are_free_again` |
+| `PENDING_APPROVAL → EXPIRED` at `starts_at` *(v0.2)* | OP-05 | `TestApprove::test_approval_after_the_screening_started_is_409_and_reads_expired`, `TestConfirmNeedingApproval::test_pending_reservation_of_a_started_screening_reads_as_expired_and_is_free` |
+| approve versus cancel race: always ends `CANCELLED` *(v0.2)* | OP-05 | `TestApprove::test_approve_and_cancel_arriving_together_always_end_cancelled` |
+| non-operator decision → `403` *(v0.2)* | OP-05 | *deferred to C03 — the application has no roles yet* |

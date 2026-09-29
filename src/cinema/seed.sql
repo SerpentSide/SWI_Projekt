@@ -39,3 +39,6 @@ WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 10)
 INSERT INTO seats (hall_id, row_label, seat_number)
 SELECT h.id, char(64 + r.x), s.x
 FROM halls h, n AS r, n AS s;
+
+-- v0.2 demo: the last row of every hall is a VIP row whose reservations need approval.
+UPDATE seats SET requires_approval = 1 WHERE row_label = 'J';

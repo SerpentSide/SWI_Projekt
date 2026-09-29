@@ -78,10 +78,10 @@ Every row is meant to be read against that spec's matching OP-xx slice, not stan
 | Meaning | "Approve", "reject", "pending", "expired approval" each defined once (OP-05, Definition of Occupied); expiry means `now >= starts_at`, no invented duration. |
 | Need / rationale | Comes directly from the change card; without it a `PENDING_APPROVAL` reservation could never leave that state. |
 | Observable | Yes — new state, `occupied` flag in availability, HTTP status. The mechanism for recognising an operator is deliberately not prescribed. |
-| Feasible | Coexists with OP-03/OP-04: all three act on disjoint source states except the Cancel/Approve race, which has a stated winner-takes-it outcome. |
+| Feasible | Coexists with OP-03/OP-04: all three act on disjoint source states except the Cancel/Approve race, whose outcome is stated for both orders (it always ends `CANCELLED`). |
 | Verifiable | Each outcome has a concrete example, including the delayed and expired cases; needs a frozen clock and a planted pending reservation. |
 | State / time | Yes — depends on stored state and on `starts_at` versus now; a delayed decision is a required example. |
-| Concurrency | Approve versus Cancel on one reservation: one commit wins, the other gets `409`. Approval into `CONFIRMED` is still guarded by `uq_confirmed_seat_per_screening`. |
+| Concurrency | Approve versus Cancel on one reservation: Cancel is `200` in either order, Approve is `200` (then cancelled) or `409`; the end state is always `CANCELLED`. Approval into `CONFIRMED` is still guarded by `uq_confirmed_seat_per_screening`. |
 | Consistency | Agrees with the Project Frame (updated), BR-01..BR-03 and the v0.2 state diagram. |
 | Unknown? | Yes, stated in the slice: how a caller is recognised as an operator (no roles exist), and whether viewers/operators are notified. |
 

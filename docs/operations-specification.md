@@ -400,8 +400,8 @@ is terminal); ADR-005 (reservation and seat rows change together, in one transac
 - Caller is not a box office operator → `403`.
 - Reservation is not `PENDING_APPROVAL` (`DRAFT`, `CONFIRMED`, `CANCELLED`, `REJECTED`,
   `EXPIRED`) → `409`; the reason names the current state. This covers deciding twice and
-  losing a race against Cancel: whichever transaction commits first wins, the other sees the
-  new state and gets `409`.
+  approving a reservation that Cancel got to first. (The reverse order is not a failure:
+  Cancel after a successful approval cancels a `CONFIRMED` reservation, which BR-03 allows.)
 - `now >= screening.starts_at` (the pending approval has expired) → `409`; the reservation
   reads as `EXPIRED` and holds no seats.
 - The database rejects an approval because a seat is already `CONFIRMED` elsewhere → `409`;
@@ -418,8 +418,9 @@ is terminal); ADR-005 (reservation and seat rows change together, in one transac
   read `occupied` throughout (it does not expire with the 15-minute hold).
 - Approve one second after the screening's `starts_at` → `409`, and the reservation reads
   `EXPIRED`.
-- Cancel and approve arrive together for the same `PENDING_APPROVAL` reservation → exactly
-  one `200`, the other `409`.
+- Cancel and approve arrive together for the same `PENDING_APPROVAL` reservation → Cancel
+  answers `200` in either order, Approve answers `200` or `409`, and the reservation always
+  ends `CANCELLED` with all its seats free. It never ends `CONFIRMED` after a `200` Cancel.
 - A caller who is not a box office operator submits a decision → `403`; state unchanged.
 
 ### Rationale / source

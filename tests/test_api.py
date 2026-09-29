@@ -13,11 +13,20 @@ from fastapi.testclient import TestClient
 import cinema.main
 from cinema.main import app, connect, has_isolated_free_seat, reset_db
 
+def no_approval_seats() -> None:
+    """The demo data has a VIP row needing approval; most tests want plain v0.1 seats."""
+    conn = connect()
+    try:
+        conn.execute("UPDATE seats SET requires_approval = 0")
+    finally:
+        conn.close()
+
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(cinema.main, "DB_PATH", tmp_path / "cinema.sqlite3")
     reset_db()
+    no_approval_seats()  # tests opt in to approval seats explicitly (v0.2)
     with TestClient(app) as c:
         yield c
 
