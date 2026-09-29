@@ -160,3 +160,98 @@ python3 -m venv .venv
 
 No external service to start -- SQLite is a file, created fresh per test by pytest's
 `tmp_path` fixture.
+
+---
+
+# Evidence C02: specification → running application
+
+**Status: Part A (baseline v0.1) is done except team sign-off. Part B (the approval change, baseline
+v0.2) has not been started** — its sections below say so instead of inventing content.
+
+## Accepted baseline
+
+**v0.1** = [`operations-specification.md`](operations-specification.md) (OP-01..OP-04, BR-01..BR-04),
+[`c02-review.md`](c02-review.md) (acceptance gate per operation) and [`diagrams.md`](diagrams.md)
+(use cases, lifecycle, activity per operation).
+
+**Not yet approved by the team** — the sign-off checklist is at the top of `diagrams.md`. Until it is
+ticked this is a draft baseline, not an accepted one.
+
+**v0.2:** does not exist.
+
+## Demonstrated operations
+
+All four run through the real HTTP API (FastAPI + SQLite, `src/cinema/main.py`) and are exercised by
+`tests/test_c02_operations.py`:
+
+| Operation | Success examples | Negative / boundary examples |
+|---|---|---|
+| OP-01 Create | valid 2-seat request → `DRAFT`, hold ≈ 15 min; spec's 8-seat example (adapted to 10) | started screening 409 · duplicate ids 422 · empty 422 · other hall 404 · live foreign hold 409 · orphan 422 · **two simultaneous creates → exactly one 201 (15 rounds)** |
+| OP-02 Availability | fresh screening all free; live `DRAFT` occupies | unknown 404 · expired `DRAFT` free · **`hold_until` boundary exclusive at −1 s / 0 s / +1 s (spec timing table)** · read-only |
+| OP-03 Confirm | `DRAFT` → `CONFIRMED`, reservation and seats together, `confirmed_at` set | unknown 404 · already confirmed 409 · cancelled 409 · expired 409 · multi-seat conflict confirms nothing · **two simultaneous confirms → exactly one 200 (15 rounds)** |
+| OP-04 Cancel | `DRAFT` and `CONFIRMED` before start → `CANCELLED`, row kept, seats free again | unknown 404 · already cancelled 409 · expired 409 · `CONFIRMED` after start 409 · `DRAFT` after start 409 |
+
+## Verification actually run
+
+`python -m pytest tests -q` → **38 passed, 1 xfailed** (31 new C02 tests, 6 `test_api.py`, 2 C01 spike).
+Nothing here is a recorded transcript from another machine; it was run on the commit below.
+
+## Mismatches found and how each was resolved
+
+Rule applied: decide whether the *spec*, the *example* or the *implementation* is wrong, and fix that one.
+
+| # | Found | Verdict | Resolution |
+|---|---|---|---|
+| 1 | Create accepted a screening that had already started (spec OP-01 + Project Frame: refuse) | implementation | fixed → 409 |
+| 2 | Duplicate `seat_ids` silently de-duplicated instead of 422 (spec OP-01) | implementation | fixed → 422 |
+| 3 | Cancel checked "screening started" only for `CONFIRMED`; a `DRAFT` could be cancelled after start (spec BR-03 says both) | implementation | fixed → 409 |
+| 4 | Spec OP-01 said create's race-safety mechanism "has not been built". It has: create runs inside `BEGIN IMMEDIATE`, the same write lock confirm uses. 15 simultaneous-create rounds gave exactly one 201 every time | spec | see "Correction to OP-01" below |
+| 5 | Repo did not run on Windows: `zoneinfo` has no `Europe/Prague` without the `tzdata` package | environment | `tzdata` added to `requirements.txt` for Windows |
+| 6 | OP-03 step 5 calls `NotificationService`; **no such seam exists in the code** | implementation gap | **open** — see below |
+
+### Correction to OP-01
+
+The C02 spec calls create's race-safety unbuilt and "a required piece of C03's work". Measured
+behaviour contradicts the first half: create *is* serialised. But the mechanism is the SQLite
+single-writer lock, **not** a declarative constraint like `uq_confirmed_seat_per_screening` — nothing in
+the schema stops two `DRAFT` holds on one seat if a writer ever bypasses `write_tx`. So the guarantee is
+proven for the current stack and remains a C03 concern in a different form (see drivers).
+
+## Open items (not silently decided)
+
+Each is encoded as a test or listed here so it cannot be forgotten:
+
+1. **Does a rejected confirm on an expired hold write `EXPIRED` to the row?** Spec and ADR-003: no. Code:
+   yes (it commits `EXPIRED` before answering 409). Test
+   `TestConfirm::test_expired_hold_rejection_writes_nothing` is `xfail(strict=True)` until the team picks
+   one; when it does, the test or the code flips and the xfail must be removed.
+2. **Trigger of Create.** Spec: email in the request. API: `user_id`, obtained from `POST /auth/login`.
+3. **Machine-readable error codes** (`seat_taken`, `orphan_seat`, …) promised by the spec are not
+   returned; the API returns HTTP status plus a text `detail`. The frontend shows that text.
+4. **NotificationService** (mismatch 6): not implemented, not even as a stub.
+5. Double-confirm and double-cancel are non-idempotent (`409`) — decided in the spec, implemented and
+   tested; still a product question, unchanged.
+
+## Change impact summary
+
+**Not done.** No impact analysis, no `Approve Reservation` slice, no v0.2, and the application was not
+changed for it. The only changes made in C02 so far are fixes 1–3 and 5 above, which bring the code in line
+with v0.1 rather than implement a change.
+
+## Architectural drivers carried into C03
+
+Only ones with evidence behind them:
+
+1. **create/confirm correctness rests on SQLite's global write lock.** It works and was measured under
+   concurrent create and confirm, but it is one lock for the whole database, not per seat, and no
+   constraint backs the `DRAFT` side. Any move to concurrent writers needs an equivalent guarantee.
+2. **Lazy expiry has no cleanup.** Expired `DRAFT` rows stay, keep their seat rows, and are re-evaluated
+   on every read; open item 1 is the same design seam.
+3. **No boundary seam for notifications** — the one external system in the Project Frame has no place in
+   the code.
+4. **HTTP handling, business rules and SQL share one module** (`main.py`), which is why rules such as
+   the no-orphan check exist twice (Python and the frontend copy in `seating.ts`).
+
+## Commit
+
+Application, tests and diagrams: `0520489` on branch `c02-evidence`.
