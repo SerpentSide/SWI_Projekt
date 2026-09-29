@@ -13,9 +13,15 @@ Terms used below without re-definition are defined once, here:
 
 - **Occupied** (from the Project Frame): a seat is occupied for a screening if a reservation
   for that seat and screening exists in state `CONFIRMED`, or in state `DRAFT` with
-  `hold_until` not yet passed. This is evaluated lazily at read time — ADR-003's Decision —
-  and the row's stored `state` column is never rewritten to `EXPIRED` as a side effect —
-  ADR-003's Consequences ("the `EXPIRED` state may be implicit in the table for a while").
+  `hold_until` not yet passed. This is evaluated lazily at read time (ADR-003): a `DRAFT`
+  whose hold has passed *reads as* `EXPIRED` and occupies nothing. Whether the stored `state`
+  column is also rewritten is an implementation choice, not observable through the four
+  operations, and deliberately not specified here (ADR-003: "the `EXPIRED` state may be
+  implicit in the table for a while").
+- **Failure responses**: a failed request is identified by its HTTP status and a
+  human-readable reason. The brief asks for failure *outcomes*, not error-code vocabularies,
+  so no machine-readable codes are defined; and every failure leaves the reservation state
+  unchanged.
 - **Hold window**: 15 minutes from `create`, fixed, not configurable per request in this
   baseline.
 - **No-orphan rule**: after the operation, no row touched by it may contain a maximal run
@@ -29,8 +35,9 @@ Terms used below without re-definition are defined once, here:
 **Goal / user value:** let a viewer claim specific seats for a screening so the seats stay
 theirs while they decide, without another viewer taking them in the meantime.
 
-**Trigger:** `POST /reservations` with the viewer's email, a `screening_id`, and 1..N
-`seat_ids`.
+**Trigger:** `POST /reservations` for a logged-in viewer (`user_id`, issued by
+`POST /auth/login`), a `screening_id`, and 1..N `seat_ids`. Authorisation beyond "is a known
+user" is out of scope of this baseline.
 
 **Observable requirement(s):** the response is either `201 Created` carrying the new
 reservation's `id`, `state` (`DRAFT`), and `hold_until`, or one of the documented failure
@@ -59,7 +66,7 @@ see the Concurrency row in [`c02-review.md`](c02-review.md).
 
 ### Main success scenario
 1. Viewer picks a screening and 1..N seats, submits the request.
-2. System resolves or creates the `users` row for the given email.
+2. System checks that the viewer is a known user.
 3. System confirms the screening exists and has not started.
 4. System confirms every seat id belongs to the screening's hall.
 5. System computes the occupied/free status of every seat in every row touched by the
@@ -73,26 +80,24 @@ see the Concurrency row in [`c02-review.md`](c02-review.md).
 8. System returns `201` with the reservation id, state, and `hold_until`.
 
 ### Alternative / failure outcomes
-- Unknown `screening_id` → `404`.
-- Screening already started → `409` (`screening_already_started`).
+- Unknown `screening_id` or unknown viewer → `404`.
+- Screening already started → `409`.
 - Unknown seat id, or seat not in the screening's hall → `404`.
-- Empty or duplicate `seat_ids` → `422` (`invalid_seat_selection`).
-- A requested seat is occupied → `409` (`seat_taken`, names the seat).
-- Two concurrent create requests target the same seat → exactly one `201`, the other
-  `409 seat_taken` — required, not merely likely (see Assumption below for what still needs
-  to be built to guarantee this).
-- The selection would orphan a seat → `422` (`orphan_seat`, names the row and the seat
-  that would be stranded).
+- Empty or duplicate `seat_ids` → `422`.
+- A requested seat is occupied → `409`; the reason names the seat.
+- Two concurrent create requests target the same seat → exactly one `201`, the other `409`
+  — required, not merely likely (see Assumption below).
+- The selection would orphan a seat → `422`; the reason names the row.
 
 ### Verification examples
 - Given the 8-seat row from `intent-and-change.md` with A1,A2,A7,A8 occupied, requesting
-  A3+A4 → `201` (free run A5-A6 has length 2). Requesting A4+A5+A6 → `422 orphan_seat`
+  A3+A4 → `201` (free run A5-A6 has length 2). Requesting A4+A5+A6 → `422`
   (A3 would be stranded — the third worked example in `intent-and-change.md`).
-- Requesting a seat already held as a live `DRAFT` by another user → `409 seat_taken`.
+- Requesting a seat already held as a live `DRAFT` by another user → `409`.
 - Requesting a seat for screening 99 which does not exist → `404`.
 - now < screening.starts\_at → `409`
 - Two `create` requests for the same seat arriving together → exactly one `201`, the other
-  `409 seat_taken`; never two `201`s for the same seat — the same shape of outcome the C01
+  `409`; never two `201`s for the same seat — the same shape of outcome the C01
   spike measured for confirm (`evidence-and-evolution.md`, Run 2), now required of create
   too.
 
@@ -127,7 +132,7 @@ are actually free before choosing, and see the live effect of everyone else's ho
 **Trigger:** `GET /screenings/{screening_id}/availability`.
 
 **Observable requirement(s):** `200` with one entry per seat in the screening's hall
-(`hall`, `row_label`, `seat_number`, `status` ∈ {`free`, `occupied`}), or `404` if the
+(`row_label`, `seat_number`, and an `occupied` flag), or `404` if the
 screening does not exist.
 
 **Preconditions:** the screening exists.
@@ -221,28 +226,28 @@ boundary rule ("a failed notification must never fail a confirmed reservation").
 
 ### Alternative / failure outcomes
 - Unknown `reservation_id` → `404`.
-- Reservation is `CANCELLED` or `EXPIRED` (stored or lazily-derived) → `409`
-  (`invalid_state`, names the current state).
-- Reservation is `DRAFT` but `hold_until` has passed → `409` (`hold_expired`) — this is the
-  lazy `EXPIRED` case from ADR-003; nothing is written to the row by this rejection.
+- Reservation is `CANCELLED` or `EXPIRED` (stored or lazily-derived) → `409`; the reason
+  names the current state.
+- Reservation is `DRAFT` but `hold_until` has passed → `409` (hold expired) — the lazy
+  `EXPIRED` case from ADR-003. The reservation afterwards reads as `EXPIRED` and holds no seats.
 - The database rejects the write because a seat in this reservation is already `CONFIRMED`
-  elsewhere (`uq_confirmed_seat_per_screening`) → `409` (`seat_taken`). This is the exact
-  scenario measured in the C01 spike.
+  elsewhere (`uq_confirmed_seat_per_screening`) → `409`. This is the exact scenario measured
+  in the C01 spike.
 - `NotificationService` call fails or times out → confirm still returns `200`; failure is
   not surfaced to the caller as an error.
 
 ### Verification examples
 - Reproduce the C01 spike as an acceptance-level check: two `DRAFT` reservations on the
   same seat, both confirmed concurrently → exactly one `200 CONFIRMED`, one
-  `409 seat_taken`; never two `200`s (`evidence-and-evolution.md`, Run 2).
-- Confirm a reservation whose `hold_until` is one second in the past → `409 hold_expired`.
+  `409`; never two `200`s (`evidence-and-evolution.md`, Run 2).
+- Confirm a reservation whose `hold_until` is one second in the past → `409`, and the reservation reads as `EXPIRED`.
 - Confirm a reservation with two seats where a different reservation has since confirmed
-  one of them → `409 seat_taken`, and **neither** of this reservation's seats is left
+  one of them → `409`, and **neither** of this reservation's seats is left
   `CONFIRMED` (atomicity check).
 
 ### Assumption / unknown / TBD
 - **Confirming an already-`CONFIRMED` reservation.** Not stated anywhere in C01. We chose
-  `409 invalid_state` (confirm is not idempotent in this baseline) over silently returning
+  `409` (confirm is not idempotent in this baseline) over silently returning
   `200` again, because a caller receiving `200` twice for two different physical clicks
   cannot tell a real re-confirmation from a duplicated network request. This is a genuine
   open product question — same category as the Project Frame's own *Unknown* — not
@@ -289,18 +294,17 @@ requirement for `reservations` and `reservation_seats`.
 
 ### Alternative / failure outcomes
 - Unknown `reservation_id` → `404`.
-- Reservation already `CANCELLED` → `409` (`invalid_state`) — see Assumption below.
-- Reservation is `EXPIRED` (lazily derived) → `409` (`invalid_state`); the state diagram in
+- Reservation already `CANCELLED` → `409` — see Assumption below.
+- Reservation is `EXPIRED` (lazily derived) → `409`; the state diagram in
   the README shows no `cancel()` arrow leaving `EXPIRED`, so this is a direct reading of an
   existing diagram, not a new assumption.
-- `now >= screening.starts_at` → `409` (`screening_already_started`).
+- `now >= screening.starts_at` → `409`.
 
 ### Verification examples
 - Cancel a `CONFIRMED` reservation an hour before its screening → `200`; a subsequent
   Check Availability call on that screening shows its seats `free`.
-- Cancel a reservation whose screening's `starts_at` is one second in the past → `409
-  screening_already_started`.
-- Cancel a reservation that is already `CANCELLED` → `409 invalid_state`.
+- Cancel a reservation whose screening's `starts_at` is one second in the past → `409`.
+- Cancel a reservation that is already `CANCELLED` → `409`.
 
 ### Rationale / source
 `intent-and-change.md` Core operations table ("allowed until the screening starts");

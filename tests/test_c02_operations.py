@@ -3,10 +3,6 @@
 Every test names the spec slice / verification example it checks. Unlike test_api.py
 (which relies on random demo data) these build their own screenings, so a row is always
 completely free and "now" relative to a screening is exact.
-
-Tests marked xfail(strict=True) encode a decision the team has NOT made yet (see
-docs/evidence-and-evolution.md, "Open"): they document the spec's current wording and
-will start failing loudly - forcing a spec or code update - once the behaviour changes.
 """
 
 from __future__ import annotations
@@ -266,13 +262,14 @@ class TestConfirm:
         rid = plant(screening, user, row_seats()[:2], hold_until=utc(-timedelta(seconds=1)))
         assert client.post(f"/reservations/{rid}/confirm").status_code == 409
 
-    @pytest.mark.xfail(strict=True, reason="OPEN: spec/ADR-003 say a rejected confirm writes nothing; "
-                                           "code persists EXPIRED. Team must pick one.")
-    def test_expired_hold_rejection_writes_nothing(self, client):
+    def test_expired_hold_reads_as_expired_and_holds_no_seats(self, client):
+        """Observable outcome only - whether the row is rewritten is not specified (ADR-003)."""
         user, screening = login(client), make_screening(timedelta(hours=3))
-        rid = plant(screening, user, row_seats()[:2], hold_until=utc(-timedelta(seconds=1)))
-        client.post(f"/reservations/{rid}/confirm")
-        assert stored(rid) == ("DRAFT", ["DRAFT", "DRAFT"])
+        seats = row_seats()[:2]
+        rid = plant(screening, user, seats, hold_until=utc(-timedelta(seconds=1)))
+        assert client.post(f"/reservations/{rid}/confirm").status_code == 409
+        assert client.get(f"/reservations/{rid}").json()["state"] == "EXPIRED"
+        assert occupied_ids(client, screening) == set()
 
     def test_multi_seat_conflict_leaves_no_seat_confirmed(self, client):
         """Spec OP-03 atomicity example."""

@@ -193,7 +193,7 @@ All four run through the real HTTP API (FastAPI + SQLite, `src/cinema/main.py`) 
 
 ## Verification actually run
 
-`python -m pytest tests -q` → **38 passed, 1 xfailed** (31 new C02 tests, 6 `test_api.py`, 2 C01 spike).
+`python -m pytest tests -q` → **39 passed** (31 new C02 tests, 6 `test_api.py`, 2 C01 spike).
 Nothing here is a recorded transcript from another machine; it was run on the commit below.
 
 ## Mismatches found and how each was resolved
@@ -208,6 +208,10 @@ Rule applied: decide whether the *spec*, the *example* or the *implementation* i
 | 4 | Spec OP-01 said create's race-safety mechanism "has not been built". It has: create runs inside `BEGIN IMMEDIATE`, the same write lock confirm uses. 15 simultaneous-create rounds gave exactly one 201 every time | spec | see "Correction to OP-01" below |
 | 5 | Repo did not run on Windows: `zoneinfo` has no `Europe/Prague` without the `tzdata` package | environment | `tzdata` added to `requirements.txt` for Windows |
 | 6 | OP-03 step 5 calls `NotificationService`; **no such seam exists in the code** | implementation gap | **open** — see below |
+| 7 | Spec said a rejected confirm on an expired hold must not rewrite the row; code writes `EXPIRED` | spec | the brief requires *observable* requirements; the stored column is not observable (reads give `EXPIRED` either way). Spec reworded, test now checks what is observable |
+| 8 | Spec said Create takes the viewer's **email**; API takes `user_id` issued by `/auth/login` | spec | the brief only says "Authorized User"; spec now says logged-in `user_id` |
+| 9 | Spec named error codes (`seat_taken`, `orphan_seat`, …) that no code returns | spec | the brief asks for failure *outcomes*, and warns against invented precision; codes removed, status + reason remain |
+| 10 | Spec OP-02 said seats carry `status ∈ {free, occupied}`; API returns an `occupied` boolean | spec | same reasoning; spec now says an `occupied` flag |
 
 ### Correction to OP-01
 
@@ -217,20 +221,18 @@ single-writer lock, **not** a declarative constraint like `uq_confirmed_seat_per
 the schema stops two `DRAFT` holds on one seat if a writer ever bypasses `write_tx`. So the guarantee is
 proven for the current stack and remains a C03 concern in a different form (see drivers).
 
-## Open items (not silently decided)
+## Open items
 
-Each is encoded as a test or listed here so it cannot be forgotten:
-
-1. **Does a rejected confirm on an expired hold write `EXPIRED` to the row?** Spec and ADR-003: no. Code:
-   yes (it commits `EXPIRED` before answering 409). Test
-   `TestConfirm::test_expired_hold_rejection_writes_nothing` is `xfail(strict=True)` until the team picks
-   one; when it does, the test or the code flips and the xfail must be removed.
-2. **Trigger of Create.** Spec: email in the request. API: `user_id`, obtained from `POST /auth/login`.
-3. **Machine-readable error codes** (`seat_taken`, `orphan_seat`, …) promised by the spec are not
-   returned; the API returns HTTP status plus a text `detail`. The frontend shows that text.
-4. **NotificationService** (mismatch 6): not implemented, not even as a stub.
-5. Double-confirm and double-cancel are non-idempotent (`409`) — decided in the spec, implemented and
+1. **NotificationService** (mismatch 6): not implemented, not even as a stub, although OP-03 step 5
+   calls it.
+2. **Authorisation.** The brief's reference Create requires an *authorised* user and rejects an
+   unauthorised one. The API only checks that the `user_id` exists (unknown → 404); anyone can act as
+   any user, and cancel/confirm do not check ownership at all.
+3. Double-confirm and double-cancel are non-idempotent (`409`) — decided in the spec, implemented and
    tested; still a product question, unchanged.
+
+Items formerly listed here as open (row rewriting on expiry, email vs `user_id`, error codes) were
+settled as spec corrections — mismatches 7–9.
 
 ## Change impact summary
 

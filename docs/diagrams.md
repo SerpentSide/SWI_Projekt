@@ -71,9 +71,8 @@ stateDiagram-v2
 
     note right of EXPIRED
         Terminal. confirm and cancel are both
-        rejected (409). Not written to the row
-        by the system (ADR-003) - see Open item
-        in evidence-and-evolution.md.
+        rejected (409). Whether the stored row
+        is rewritten is not specified (ADR-003).
     end note
 ```
 
@@ -83,7 +82,7 @@ reservation exactly where it was, so no failure arrows are drawn.
 ## 3. Activity diagrams — behaviour of each operation
 
 Decision order matches the "Main success scenario" of each OP slice; outcomes are the HTTP
-codes from its "Alternative / failure outcomes".
+status codes from its "Alternative / failure outcomes" (the spec defines no error-code names).
 
 ### OP-01 Create Reservation
 
@@ -164,7 +163,7 @@ Each edge of the state diagram, traced to the text and to an executed test
 | `DRAFT → CONFIRMED` | OP-03 | `TestConfirm::test_draft_becomes_confirmed_together_with_its_seats` |
 | `DRAFT → CANCELLED` | OP-04, BR-03 | `TestCancel::test_draft_before_start_is_cancelled_and_row_is_kept` |
 | `CONFIRMED → CANCELLED` | OP-04, BR-03 | `TestCancel::test_confirmed_before_start_is_cancelled_and_seats_are_free_again` |
-| `DRAFT → EXPIRED` (derived) | OP-02 timing example, ADR-003 | `TestAvailability::test_hold_boundary_is_exclusive` |
+| `DRAFT → EXPIRED` (derived) | OP-02 timing example, ADR-003 | `TestAvailability::test_hold_boundary_is_exclusive`, `TestConfirm::test_expired_hold_reads_as_expired_and_holds_no_seats` |
 | no arrow out of `CANCELLED` | BR-03 | `TestCancel::test_already_cancelled_is_409`, `TestConfirm::test_cancelled_is_409` |
 | no arrow out of `EXPIRED` | BR-03 | `TestCancel::test_expired_is_409`, `TestConfirm::test_expired_hold_is_409` |
 | cancel refused after start (both states) | BR-03 | `TestCancel::test_confirmed_after_start_is_409`, `::test_draft_after_start_is_409` |
