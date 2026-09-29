@@ -1,0 +1,2 @@
+fastapi[standard]>=0.115
+tzdata; sys_platform == "win32"

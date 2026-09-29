@@ -33,6 +33,7 @@ export function SeatMapModal({ title, subtitle, screeningId, onClose }: SeatMapM
   const [isSubmitting, setIsSubmitting] = React.useState(false)
   const [serverError, setServerError] = React.useState<string | null>(null)
   const [reserved, setReserved] = React.useState(false)
+  const [awaitingApproval, setAwaitingApproval] = React.useState(false)
 
   const loadSeats = React.useCallback(() => {
     api
@@ -96,7 +97,8 @@ export function SeatMapModal({ title, subtitle, screeningId, onClose }: SeatMapM
         screeningId,
         Array.from(selectedSeats),
       )
-      await api.confirmReservation(reservation_id)
+      const { state } = await api.confirmReservation(reservation_id)
+      setAwaitingApproval(state === 'PENDING_APPROVAL')
       setReserved(true)
     } catch (err) {
       setServerError(err instanceof ApiError ? err.message : 'Rezervace se nezdařila.')
@@ -110,7 +112,9 @@ export function SeatMapModal({ title, subtitle, screeningId, onClose }: SeatMapM
   const message = serverError
     ? serverError
     : reserved
-      ? `Rezervace potvrzena (${selectedSeats.size} ${selectedSeats.size === 1 ? 'sedadlo' : 'sedadla'}).`
+      ? awaitingApproval
+        ? 'Rezervace čeká na schválení pokladnou - sedadla jsou zatím držena.'
+        : `Rezervace potvrzena (${selectedSeats.size} ${selectedSeats.size === 1 ? 'sedadlo' : 'sedadla'}).`
       : invalidRows.length > 0
         ? `Tento výběr by nechal osamocené volné sedadlo v řadě ${invalidRows.join(', ')} - uprav výběr, než budeš moct rezervovat.`
         : null

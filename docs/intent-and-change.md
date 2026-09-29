@@ -29,7 +29,7 @@ reliable picture of which seats are actually sold before a screening starts.
 | Role | What they do with the system |
 |---|---|
 | **Viewer** (moviegoer) | Browses seat availability, creates a reservation, confirms or cancels it. |
-| **Box office operator** | Looks up a reservation, sees real occupancy of a screening, cancels on request. |
+| **Box office operator** | Looks up a reservation, sees real occupancy of a screening, cancels on request. **Approves or rejects reservations for seats that need approval (v0.2).** |
 | **Cinema operator** (business stakeholder) | Cares that seats are not double-booked and that unsold single seats are minimised. |
 
 Out of scope for now: the programmer/dramaturg who schedules screenings. We treat the
@@ -53,9 +53,10 @@ screening: `[screening.starts_at, screening.starts_at + movie.duration]`.
 
 | Operation | Effect |
 |---|---|
-| **Create reservation** | Validates the request, holds the chosen seats, returns a reservation in state `DRAFT` with a `hold_until` deadline. |
-| **Confirm reservation** | `DRAFT` -> `CONFIRMED`, only while the hold is still alive. This is the operation that makes the seat definitively sold. |
-| **Cancel reservation** | `DRAFT` or `CONFIRMED` -> `CANCELLED`, allowed until the screening starts. Frees the seats. |
+| **Create reservation** | Validates the request, holds the chosen seats, returns a reservation in state `DRAFT` with a `hold_until` deadline. Only accepted while the screening has not started. |
+| **Confirm reservation** | Only while the hold is still alive. `DRAFT` -> `CONFIRMED` — the operation that makes the seat definitively sold — **unless a seat in the reservation requires approval; then `DRAFT` -> `PENDING_APPROVAL` and the seats stay held until a decision (v0.2).** |
+| **Approve reservation** *(v0.2)* | A box office operator decides a `PENDING_APPROVAL` reservation: approve -> `CONFIRMED`, reject -> `REJECTED`. Only until the screening starts. |
+| **Cancel reservation** | `DRAFT`, `PENDING_APPROVAL` or `CONFIRMED` -> `CANCELLED`, allowed until the screening starts. Frees the seats. |
 | **Check availability** | Returns the seat map of a screening, each seat marked free or occupied. |
 
 ## Persistent state
@@ -64,8 +65,9 @@ screening: `[screening.starts_at, screening.starts_at + movie.duration]`.
 reserved `seat_id`s, `state`, `hold_until`, `created_at`, `confirmed_at`,
 `cancelled_at`.
 
-**Seat (resource)** — identity (`id`), owning `hall_id`, `row_label`, `seat_number`.
-Seats are static inventory; they are not modified by reservations. Occupancy is *derived*
+**Seat (resource)** — identity (`id`), owning `hall_id`, `row_label`, `seat_number`, and (v0.2)
+`requires_approval` — a fixed property of the seat, e.g. a VIP row. A reservation needs approval
+if at least one of its seats does. Seats are static inventory; they are not modified by reservations. Occupancy is *derived*
 from reservations, never stored on the seat.
 
 Supporting state: **Screening** (`id`, `movie_id`, `hall_id`, `starts_at`, `ends_at`),
@@ -77,27 +79,43 @@ This single definition is what both business rules stand on:
 
 > A seat is **occupied** for a screening if there exists a reservation for that seat and
 > screening which is either in state `CONFIRMED`, or in state `DRAFT` whose
-> `hold_until` has not yet passed.
+> `hold_until` has not yet passed, or (v0.2) in state `PENDING_APPROVAL` while the screening
+> has not started.
 
-Without the second half, a hold would block nothing and would be decoration.
+Without the second half, a hold would block nothing and would be decoration. A pending
+approval blocks its seats for the same reason: otherwise someone else could sell them while
+the approver decides, and there would be nothing left to approve.
+
+**This is an exclusivity guarantee, not just a display rule.** At most one reservation may
+hold a seat as a live `DRAFT` or as `CONFIRMED` at any moment — two different viewers must
+never simultaneously hold the same seat, even during the 15-minute window. A viewer who
+requests an already-occupied seat is rejected outright, and the seat does not become
+available to a second viewer until the first viewer's hold expires or is cancelled.
+`create` therefore needs the same kind of race-safety `confirm` already has (ADR-004): a
+`SELECT`-then-insert check alone is not enough here for the same reason it was not enough
+for confirm.
 
 ## State-changing operation
 
 ```
-          create()                        confirm()
-   O ---------------> DRAFT ----------------------------> CONFIRMED
-                        |   hold_until = now + 15 min           |
-     hold expired       |                                       | cancel()
-                        +-------------> EXPIRED                 | (until screening starts)
-                        |                                       |
-          cancel()      +-------------> CANCELLED <-------------+
+[start] --create-------------------------------------> DRAFT
+DRAFT   --confirm  [no seat needs approval]-----------> CONFIRMED
+DRAFT   --confirm  [a seat needs approval]------------> PENDING_APPROVAL      (v0.2)
+DRAFT   --hold_until passes---------------------------> EXPIRED    (derived)
+PENDING_APPROVAL --approve----------------------------> CONFIRMED             (v0.2)
+PENDING_APPROVAL --reject-----------------------------> REJECTED              (v0.2)
+PENDING_APPROVAL --screening starts undecided---------> EXPIRED    (derived)  (v0.2)
+DRAFT | PENDING_APPROVAL | CONFIRMED --cancel---------> CANCELLED  (until the screening starts)
 ```
 
-The state-changing operation we care about is **`DRAFT` -> `CONFIRMED`**: it is the
-moment a held seat becomes a sold seat, and therefore the moment both business rules
-must hold.
+The drawn version (Mermaid) is in `docs/diagrams.md`.
 
-`CANCELLED` and `EXPIRED` are terminal.
+The state-changing operation we care about is **becoming `CONFIRMED`** (`DRAFT` -> `CONFIRMED`,
+or `PENDING_APPROVAL` -> `CONFIRMED` for seats that need approval): it is the moment a held
+seat becomes a sold seat, and therefore the moment both business rules must hold.
+
+`CANCELLED`, `EXPIRED` and `REJECTED` are terminal. `PENDING_APPROVAL` that is still undecided
+when the screening starts reads as `EXPIRED` (derived, exactly like an expired hold).
 
 **Hold expiry is evaluated lazily.** There is no background job. `hold_until` is compared
 against the current time when a reservation is read or confirmed. A `DRAFT` row whose hold
