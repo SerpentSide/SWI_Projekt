@@ -165,36 +165,43 @@ No external service to start -- SQLite is a file, created fresh per test by pyte
 
 # Evidence C02: specification → running application
 
-**Status: Part A (baseline v0.1) is done except team sign-off. Part B (the approval change, baseline
-v0.2) has not been started** — its sections below say so instead of inventing content.
+**Status:** baseline v0.1 and the approval change (baseline v0.2) are specified, drawn, implemented
+and tested. What is **not** done: sign-off by the whole team (1 of 4 members has ticked the box),
+a role check for the box office operator, and `NotificationService`.
 
 ## Accepted baseline
 
-**v0.1** = [`operations-specification.md`](operations-specification.md) (OP-01..OP-04, BR-01..BR-04),
-[`c02-review.md`](c02-review.md) (acceptance gate per operation) and [`diagrams.md`](diagrams.md)
-(use cases, lifecycle, activity per operation).
+- **v0.1** — four operations (Create, Check Availability, Confirm, Cancel) with BR-01..BR-04, as of
+  commit `1a7e2e6`.
+- **v0.2** — adds seats that require approval: `PENDING_APPROVAL` / `REJECTED` states, a second
+  outcome for Confirm, cancellable `PENDING_APPROVAL`, and OP-05 Approve Reservation.
+  Described in [`operations-specification.md`](operations-specification.md),
+  [`c02-change-impact.md`](c02-change-impact.md), [`c02-review.md`](c02-review.md) and
+  [`diagrams.md`](diagrams.md).
 
-**Not yet approved by the team** — the sign-off checklist is at the top of `diagrams.md`. Until it is
-ticked this is a draft baseline, not an accepted one.
-
-**v0.2:** does not exist.
+**Team approval:** the checklist at the top of `diagrams.md` records who has accepted the baseline.
+At the time of writing it lists **one** of four members; until all four are ticked this is a draft
+baseline, not an accepted one.
 
 ## Demonstrated operations
 
-All four run through the real HTTP API (FastAPI + SQLite, `src/cinema/main.py`) and are exercised by
+All five run through the real HTTP API (FastAPI + SQLite, `src/cinema/main.py`) and are exercised by
 `tests/test_c02_operations.py`:
 
 | Operation | Success examples | Negative / boundary examples |
 |---|---|---|
-| OP-01 Create | valid 2-seat request → `DRAFT`, hold ≈ 15 min; spec's 8-seat example (adapted to 10) | started screening 409 · duplicate ids 422 · empty 422 · other hall 404 · live foreign hold 409 · orphan 422 · **two simultaneous creates → exactly one 201 (15 rounds)** |
-| OP-02 Availability | fresh screening all free; live `DRAFT` occupies | unknown 404 · expired `DRAFT` free · **`hold_until` boundary exclusive at −1 s / 0 s / +1 s (spec timing table)** · read-only |
-| OP-03 Confirm | `DRAFT` → `CONFIRMED`, reservation and seats together, `confirmed_at` set | unknown 404 · already confirmed 409 · cancelled 409 · expired 409 · multi-seat conflict confirms nothing · **two simultaneous confirms → exactly one 200 (15 rounds)** |
-| OP-04 Cancel | `DRAFT` and `CONFIRMED` before start → `CANCELLED`, row kept, seats free again | unknown 404 · already cancelled 409 · expired 409 · `CONFIRMED` after start 409 · `DRAFT` after start 409 |
+| OP-01 Create | valid 2-seat request → `DRAFT`, hold ≈ 15 min; spec's row example (adapted to 10 seats) | started screening 409 · duplicate ids 422 · empty 422 · other hall 404 · live foreign hold 409 · orphan 422 · seat held by a pending approval 409 · **two simultaneous creates → exactly one 201 (15 rounds)** |
+| OP-02 Availability | fresh screening all free; live `DRAFT` occupies; **pending approval occupies for hours** | unknown 404 · expired `DRAFT` free · **`hold_until` boundary exclusive at −1 s / 0 s / +1 s** · pending of a started screening free · read-only |
+| OP-03 Confirm | ordinary seats → `CONFIRMED`; **a VIP seat (even one among ordinary ones) → `PENDING_APPROVAL`** | unknown 404 · already confirmed / cancelled / pending 409 · expired 409 · multi-seat conflict confirms nothing · **two simultaneous confirms → exactly one 200 (15 rounds)** |
+| OP-04 Cancel | `DRAFT`, `CONFIRMED` and **`PENDING_APPROVAL`** before start → `CANCELLED`, row kept, seats free | unknown 404 · already cancelled / expired / **rejected** 409 · `CONFIRMED` and `DRAFT` after start 409 |
+| OP-05 Approve *(v0.2)* | approve → `CONFIRMED`; reject → `REJECTED` and seats free | deciding twice 409 · unknown 404 · invalid decision 422 · on a `DRAFT` 409 · after `starts_at` 409 and reads `EXPIRED` · collision with a `CONFIRMED` seat 409, nothing confirmed · **approve racing cancel (15 rounds) → always ends `CANCELLED`** |
 
 ## Verification actually run
 
-`python -m pytest tests -q` → **39 passed** (31 new C02 tests, 6 `test_api.py`, 2 C01 spike).
-Nothing here is a recorded transcript from another machine; it was run on the commit below.
+`python -m pytest tests -q` → **57 passed** (49 in `test_c02_operations.py` of which 18 are v0.2, 6 in
+`test_api.py`, 2 C01 spike), run three times in a row with the same result. Run on the commit below.
+
+Not run: the non-operator `403` of OP-05 (no roles to test against) — deferred, see Open items.
 
 ## Mismatches found and how each was resolved
 
@@ -212,10 +219,11 @@ Rule applied: decide whether the *spec*, the *example* or the *implementation* i
 | 8 | Spec said Create takes the viewer's **email**; API takes `user_id` issued by `/auth/login` | spec | the brief only says "Authorized User"; spec now says logged-in `user_id` |
 | 9 | Spec named error codes (`seat_taken`, `orphan_seat`, …) that no code returns | spec | the brief asks for failure *outcomes*, and warns against invented precision; codes removed, status + reason remain |
 | 10 | Spec OP-02 said seats carry `status ∈ {free, occupied}`; API returns an `occupied` boolean | spec | same reasoning; spec now says an `occupied` flag |
+| 11 | **v0.2 example wrong:** the spec said Approve and Cancel arriving together give "exactly one 200, the other 409". Running it gave two 200s: if Approve commits first, Cancel then legitimately cancels the now-`CONFIRMED` reservation (BR-03 allows it) | example / spec | the code is right. Spec, review and impact analysis now state the real invariant: Cancel is 200 in either order, Approve is 200 or 409, the reservation always ends `CANCELLED`. The test asserts exactly that |
 
 ### Correction to OP-01
 
-The C02 spec calls create's race-safety unbuilt and "a required piece of C03's work". Measured
+The C02 spec called create's race-safety unbuilt and "a required piece of C03's work". Measured
 behaviour contradicts the first half: create *is* serialised. But the mechanism is the SQLite
 single-writer lock, **not** a declarative constraint like `uq_confirmed_seat_per_screening` — nothing in
 the schema stops two `DRAFT` holds on one seat if a writer ever bypasses `write_tx`. So the guarantee is
@@ -223,37 +231,55 @@ proven for the current stack and remains a C03 concern in a different form (see 
 
 ## Open items
 
-1. **NotificationService** (mismatch 6): not implemented, not even as a stub, although OP-03 step 5
-   calls it.
-2. **Authorisation.** The brief's reference Create requires an *authorised* user and rejects an
-   unauthorised one. The API only checks that the `user_id` exists (unknown → 404); anyone can act as
-   any user, and cancel/confirm do not check ownership at all.
-3. Double-confirm and double-cancel are non-idempotent (`409`) — decided in the spec, implemented and
-   tested; still a product question, unchanged.
-
-Items formerly listed here as open (row rewriting on expiry, email vs `user_id`, error codes) were
-settled as spec corrections — mismatches 7–9.
+1. **Role of the box office operator.** OP-05 requires "a box office operator" and specifies `403`
+   for anyone else, but the application has no roles: anyone can act as any user, and Confirm and
+   Cancel do not check ownership either. Left for C03 on purpose (a fake header would look like
+   protection and not be any).
+2. **NotificationService** (mismatch 6): not implemented, not even as a stub, although OP-03 step 5 and
+   OP-05 call it. Also unspecified: who is told that a reservation is waiting for a decision, or was
+   rejected.
+3. Double-confirm, double-cancel and deciding twice are non-idempotent (`409`) — decided in the spec,
+   implemented and tested; still a product question, unchanged.
+4. **Authorisation in Create.** The brief's reference Create rejects an unauthorised user; ours only
+   checks that the `user_id` exists.
 
 ## Change impact summary
 
-**Not done.** No impact analysis, no `Approve Reservation` slice, no v0.2, and the application was not
-changed for it. The only changes made in C02 so far are fixes 1–3 and 5 above, which bring the code in line
-with v0.1 rather than implement a change.
+The change card (approval before confirmation) was analysed **before** editing anything —
+[`c02-change-impact.md`](c02-change-impact.md) — and then applied:
+
+- **Changed:** the Definition of Occupied (gains `PENDING_APPROVAL`), OP-03 (two outcomes), OP-04
+  (`PENDING_APPROVAL` cancellable), BR-02/BR-03 notes, the Project Frame and README, the use-case and
+  lifecycle diagrams, three activity diagrams; **new** OP-05 and two states.
+- **Deliberately unchanged, with reasons:** Create, Check Availability's operation and response, BR-01,
+  BR-02's invariant, BR-04, the 15-minute hold (pending is not on the hold clock), and the C01
+  unique index — Approve enters `CONFIRMED` through the same guarded write.
+- **Application:** schema (2 states, `seats.requires_approval`), `POST /reservations/{id}/decision`,
+  branching Confirm, pending-aware availability and lazy expiry, a demo VIP row (J) in the seed, and a
+  waiting-for-approval message in the seat dialog.
+- **Cost of the change**, from the diff of commit `36b7571` (application code only): 4 files, 76 lines
+  added and 13 removed, of which `main.py` is 72; no existing v0.1 test needed changing except to pin
+  its seats to ordinary (non-VIP) ones.
 
 ## Architectural drivers carried into C03
 
 Only ones with evidence behind them:
 
-1. **create/confirm correctness rests on SQLite's global write lock.** It works and was measured under
-   concurrent create and confirm, but it is one lock for the whole database, not per seat, and no
-   constraint backs the `DRAFT` side. Any move to concurrent writers needs an equivalent guarantee.
-2. **Lazy expiry has no cleanup.** Expired `DRAFT` rows stay, keep their seat rows, and are re-evaluated
-   on every read; open item 1 is the same design seam.
-3. **No boundary seam for notifications** — the one external system in the Project Frame has no place in
-   the code.
-4. **HTTP handling, business rules and SQL share one module** (`main.py`), which is why rules such as
-   the no-orphan check exist twice (Python and the frontend copy in `seating.ts`).
+1. **create/confirm/approve correctness rests on SQLite's global write lock.** It works and was
+   measured under concurrent create, confirm and approve-vs-cancel, but it is one lock for the whole
+   database, not per seat, and no constraint backs the `DRAFT` and `PENDING_APPROVAL` sides. Any move
+   to concurrent writers needs an equivalent guarantee.
+2. **No roles or authorisation** — needed by OP-05 (operator), and missing for owner checks too.
+3. **Lazy expiry has no cleanup and now has two causes** (hold passed, screening started while
+   pending). Expired rows stay and are re-evaluated on every read; a long-lived pending state also
+   needs a work queue for the operator, which does not exist.
+4. **No boundary seam for notifications** — the one external system in the Project Frame has no place
+   in the code, and v0.2 adds two more moments that want a notification.
+5. **HTTP handling, business rules and SQL share one module** (`main.py`), which is why rules such as
+   the no-orphan check exist twice (Python and the frontend copy in `seating.ts`) and why the
+   approval branch had to touch several unrelated functions.
 
 ## Commit
 
-Application, tests and diagrams: `0520489` on branch `c02-evidence`.
+Application, tests and specification for v0.1 and v0.2: see `git log` on branch `c02-evidence`;
+the v0.2 implementation is commit `36b7571`.
