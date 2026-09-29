@@ -97,6 +97,11 @@ see the Concurrency row in [`c02-review.md`](c02-review.md).
   too.
 
 ### Assumption / unknown / TBD
+- **Update (C02 evidence):** the claim below that the mechanism is "not yet built" is out of date. The
+  API runs create inside `BEGIN IMMEDIATE`, and 15 simultaneous-create rounds yielded exactly one `201`
+  each time (`tests/test_c02_operations.py`). What is still true: the guarantee is SQLite's single write
+  lock, not a constraint covering live `DRAFT` holds. See "Correction to OP-01" in
+  `evidence-and-evolution.md`.
 - **The policy is settled; the mechanism is not yet built.** The Project Frame now states
   plainly that at most one viewer may hold a seat as a live `DRAFT` or as `CONFIRMED` at
   any moment, so create() is required to be race-safe the same way confirm() already is
