@@ -238,6 +238,10 @@ def availability(screening_id: int, db=Depends(get_db)):
 def create_reservation(body: ReservationIn, db=Depends(get_db)):
     with write_tx(db):
         screening = get_screening_or_404(db, body.screening_id)
+        if screening["starts_at"] <= now():  # BR-01: reservable only while now < starts_at
+            raise HTTPException(409, "The screening has already started")
+        if len(set(body.seat_ids)) != len(body.seat_ids):
+            raise HTTPException(422, "Duplicate seat ids")
         if db.execute("SELECT 1 FROM users WHERE id = ?", (body.user_id,)).fetchone() is None:
             raise HTTPException(404, "User not found")
 
@@ -328,10 +332,9 @@ def cancel_reservation(reservation_id: int, db=Depends(get_db)):
         reservation = get_reservation_or_404(db, reservation_id)
         if reservation["state"] not in ("DRAFT", "CONFIRMED") or is_expired(reservation):
             raise HTTPException(409, "Only active reservations can be cancelled")
-        if reservation["state"] == "CONFIRMED":
-            screening = get_screening_or_404(db, reservation["screening_id"])
-            if screening["starts_at"] <= now():
-                raise HTTPException(409, "The screening has already started")
+        screening = get_screening_or_404(db, reservation["screening_id"])
+        if screening["starts_at"] <= now():  # BR-03: DRAFT and CONFIRMED alike
+            raise HTTPException(409, "The screening has already started")
         set_state(db, reservation_id, "CANCELLED", "cancelled_at")
     return {"reservation_id": reservation_id, "state": "CANCELLED"}
 
