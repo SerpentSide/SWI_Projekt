@@ -179,9 +179,6 @@ a role check for the box office operator, and `NotificationService`.
   [`c02-change-impact.md`](c02-change-impact.md), [`c02-review.md`](c02-review.md) and
   [`diagrams.md`](diagrams.md).
 
-**Team approval:** the checklist at the top of `diagrams.md` records who has accepted the baseline.
-At the time of writing it lists **one** of four members; until all four are ticked this is a draft
-baseline, not an accepted one.
 
 ## Demonstrated operations
 
