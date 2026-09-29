@@ -57,8 +57,8 @@ def reset_db(path: Path | None = None) -> None:
     conn = connect(path)
     conn.row_factory = None
     try:
-        conn.executescript((HERE / "schema.sql").read_text())
-        conn.executescript((HERE / "seed.sql").read_text())
+        conn.executescript((HERE / "schema.sql").read_text(encoding="utf-8"))
+        conn.executescript((HERE / "seed.sql").read_text(encoding="utf-8"))
         with write_tx(conn):
             seed_random(conn)
     finally:
