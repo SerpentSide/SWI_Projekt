@@ -63,12 +63,37 @@ Every row is meant to be read against that spec's matching OP-xx slice, not stan
 | Consistency | Agrees with the Project Frame's explicit boundary; does not contradict OP-03. |
 | Unknown? | Double-cancel idempotency stated explicitly as open in the spec, matching OP-03. |
 
+## v0.2 — slices changed by the approval change (re-checked)
+
+| Slice | What was re-checked | Result |
+|---|---|---|
+| OP-02 | "Occupied" now includes `PENDING_APPROVAL` while `now < starts_at`. Consistent with OP-03 (creates the pending state) and OP-05 (ends it). | Consistent. Operation and response shape unchanged. |
+| OP-03 | Two outcomes (`CONFIRMED` / `PENDING_APPROVAL`) chosen by a fixed seat property; every v0.1 example for ordinary seats still holds. | Consistent. New open item: who is notified of a pending decision. |
+| OP-04 | `PENDING_APPROVAL` cancellable, `REJECTED` not. Same `now < starts_at` boundary as before. | Consistent with BR-03. |
+
+## OP-05 — Approve Reservation (v0.2)
+
+| Question | Answer |
+|---|---|
+| Meaning | "Approve", "reject", "pending", "expired approval" each defined once (OP-05, Definition of Occupied); expiry means `now >= starts_at`, no invented duration. |
+| Need / rationale | Comes directly from the change card; without it a `PENDING_APPROVAL` reservation could never leave that state. |
+| Observable | Yes — new state, `occupied` flag in availability, HTTP status. The mechanism for recognising an operator is deliberately not prescribed. |
+| Feasible | Coexists with OP-03/OP-04: all three act on disjoint source states except the Cancel/Approve race, which has a stated winner-takes-it outcome. |
+| Verifiable | Each outcome has a concrete example, including the delayed and expired cases; needs a frozen clock and a planted pending reservation. |
+| State / time | Yes — depends on stored state and on `starts_at` versus now; a delayed decision is a required example. |
+| Concurrency | Approve versus Cancel on one reservation: one commit wins, the other gets `409`. Approval into `CONFIRMED` is still guarded by `uq_confirmed_seat_per_screening`. |
+| Consistency | Agrees with the Project Frame (updated), BR-01..BR-03 and the v0.2 state diagram. |
+| Unknown? | Yes, stated in the slice: how a caller is recognised as an operator (no roles exist), and whether viewers/operators are notified. |
+
 ## Open items carried forward
 
 - OP-01: the policy that create() must be race-safe like confirm() is now settled (Project
   Frame); the mechanism to guarantee it is not built yet — a required piece of C03's work.
 - OP-03: whether confirming an already-`CONFIRMED` reservation should be idempotent.
 - OP-04: whether cancelling an already-`CANCELLED` reservation should be idempotent.
+
+- v0.2: how a caller is recognised as a box office operator (OP-05); who is notified of a pending
+  decision or a rejection (OP-03, OP-05).
 
 None of these are silently resolved; each is stated where it belongs in
 [`operations-specification.md`](operations-specification.md) and repeated here so a

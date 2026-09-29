@@ -1,20 +1,25 @@
 # Operations Specification (C02)
 
-This document is the complete minimum-behavior specification for the four core operations
-named in the Project Frame ([`intent-and-change.md`](intent-and-change.md#core-operations)):
+**Version: baseline v0.2 (draft — awaiting team approval).** v0.1 is the four-operation
+version at commit `1a7e2e6`; what changed and what did not is in
+[`c02-change-impact.md`](c02-change-impact.md). Passages changed by v0.2 are marked *(v0.2)*.
+
+This document is the complete minimum-behavior specification for the core operations named
+in the Project Frame ([`intent-and-change.md`](intent-and-change.md#core-operations)):
 **Create Reservation**, **Check Availability**, **Confirm Reservation**, **Cancel
-Reservation**. It is what a baseline application implements and what its acceptance tests
-check. There is no fifth operation. In particular there is no `Approve`: confirming a
-reservation is the only state-changing acceptance step in this baseline, and nothing here
-models a human approval workflow — if one is ever needed it is a distinct, later change, not
-a rename of Confirm.
+Reservation**, and — since v0.2 — **Approve Reservation**. It is what a baseline application
+implements and what its acceptance tests check. *(v0.2)* Approve exists because some seats
+require a human decision before a reservation may become `CONFIRMED`; it was introduced by
+that change and by nothing else. Confirm was not renamed or removed.
 
 Terms used below without re-definition are defined once, here:
 
 - **Occupied** (from the Project Frame): a seat is occupied for a screening if a reservation
   for that seat and screening exists in state `CONFIRMED`, or in state `DRAFT` with
-  `hold_until` not yet passed. This is evaluated lazily at read time (ADR-003): a `DRAFT`
-  whose hold has passed *reads as* `EXPIRED` and occupies nothing. Whether the stored `state`
+  `hold_until` not yet passed, or *(v0.2)* in state `PENDING_APPROVAL` while
+  `now < screening.starts_at`. This is evaluated lazily at read time (ADR-003): a `DRAFT`
+  whose hold has passed, or a `PENDING_APPROVAL` whose screening has started, *reads as*
+  `EXPIRED` and occupies nothing. Whether the stored `state`
   column is also rewritten is an implementation choice, not observable through the four
   operations, and deliberately not specified here (ADR-003: "the `EXPIRED` state may be
   implicit in the table for a while").
@@ -188,19 +193,25 @@ README "Definition of 'occupied'"; ADR-003; ADR-004's demotion note.
 
 **Trigger:** `POST /reservations/{reservation_id}/confirm`.
 
-**Observable requirement(s):** `200` with the reservation's id and new state `CONFIRMED`
-plus `confirmed_at`, or one of the documented failure codes.
+**Observable requirement(s):** `200` with the reservation's id and its new state, or a
+documented failure. *(v0.2)* The new state is `CONFIRMED` (plus `confirmed_at`) when no seat
+of the reservation requires approval, and `PENDING_APPROVAL` when at least one does.
 
 **Preconditions:**
 - The reservation exists.
 - Its (lazily evaluated) state is `DRAFT` — i.e. stored `state = 'DRAFT'` **and**
   `hold_until` has not passed.
 
-**Success postcondition:** reservation `state = CONFIRMED`, `confirmed_at = now`; every one
-of its `reservation_seats` rows `state = CONFIRMED`. No seat in this reservation is left
-partially confirmed.
+**Success postcondition:** *(v0.2, two cases)*
+- no seat requires approval: reservation `state = CONFIRMED`, `confirmed_at = now`; every
+  one of its `reservation_seats` rows `state = CONFIRMED`;
+- at least one seat requires approval: reservation `state = PENDING_APPROVAL`, no
+  `confirmed_at`; every one of its `reservation_seats` rows `state = PENDING_APPROVAL`; its
+  seats stay occupied.
 
-**State change:** `DRAFT` → `CONFIRMED`.
+In both cases no seat of the reservation is left in a different state from the rest.
+
+**State change:** `DRAFT` → `CONFIRMED`, or *(v0.2)* `DRAFT` → `PENDING_APPROVAL`.
 
 **Referenced business rule(s) / invariant(s):** the mandatory rule ("two confirmed
 reservations for the same seat must not overlap in time", BR-02, over the `[starts_at,
@@ -224,10 +235,24 @@ boundary rule ("a failed notification must never fail a confirmed reservation").
    ignores its outcome for the purpose of this response.
 6. System returns `200` with the confirmed reservation.
 
+### Variant *(v0.2)* — a seat requires approval
+Steps 1–2 are as above. Then:
+3. System sees that at least one of the reservation's seats requires approval.
+4. Instead of `CONFIRMED`, system writes `PENDING_APPROVAL` to the reservation and to every
+   one of its `reservation_seats` rows, in the same transaction. `confirmed_at` stays empty.
+5. System returns `200` with state `PENDING_APPROVAL`. The seats remain occupied; nothing
+   else can take them while the decision is pending.
+
+`uq_confirmed_seat_per_screening` does not fire here (it covers `CONFIRMED` only); the seats'
+exclusivity while pending comes from the Definition of Occupied and from create's exclusivity.
+Whether anyone is notified that a decision is now needed is **not specified** — see the
+Assumption below.
+
 ### Alternative / failure outcomes
 - Unknown `reservation_id` → `404`.
-- Reservation is `CANCELLED` or `EXPIRED` (stored or lazily-derived) → `409`; the reason
-  names the current state.
+- Reservation is `CANCELLED`, `EXPIRED`, `PENDING_APPROVAL` or `REJECTED` (stored or
+  lazily-derived) → `409`; the reason names the current state. *(v0.2 adds the last two: a
+  pending reservation is decided through Approve, not by confirming again.)*
 - Reservation is `DRAFT` but `hold_until` has passed → `409` (hold expired) — the lazy
   `EXPIRED` case from ADR-003. The reservation afterwards reads as `EXPIRED` and holds no seats.
 - The database rejects the write because a seat in this reservation is already `CONFIRMED`
@@ -240,12 +265,19 @@ boundary rule ("a failed notification must never fail a confirmed reservation").
 - Reproduce the C01 spike as an acceptance-level check: two `DRAFT` reservations on the
   same seat, both confirmed concurrently → exactly one `200 CONFIRMED`, one
   `409`; never two `200`s (`evidence-and-evolution.md`, Run 2).
+- *(v0.2)* `DRAFT` on a seat that requires approval → `200 PENDING_APPROVAL`; the same seat
+  still reads `occupied`; the reservation is **not** `CONFIRMED`. `DRAFT` on ordinary seats
+  → `200 CONFIRMED`, unchanged from v0.1.
 - Confirm a reservation whose `hold_until` is one second in the past → `409`, and the reservation reads as `EXPIRED`.
 - Confirm a reservation with two seats where a different reservation has since confirmed
   one of them → `409`, and **neither** of this reservation's seats is left
   `CONFIRMED` (atomicity check).
 
 ### Assumption / unknown / TBD
+- *(v0.2)* **Who is told that a reservation is waiting for a decision.** Neither the box
+  office nor the viewer is specified to be notified when a reservation enters
+  `PENDING_APPROVAL`. The Project Frame's `NotificationService` has no call for it. Left
+  undecided on purpose; without it an operator has to look, not be told.
 - **Confirming an already-`CONFIRMED` reservation.** Not stated anywhere in C01. We chose
   `409` (confirm is not idempotent in this baseline) over silently returning
   `200` again, because a caller receiving `200` twice for two different physical clicks
@@ -268,15 +300,16 @@ starts. Cancel is a state change, not a physical delete — the row and its hist
 
 **Preconditions:**
 - The reservation exists.
-- Its (lazily evaluated) state is `DRAFT` or `CONFIRMED` (not already `CANCELLED`, and not
-  `EXPIRED`).
+- Its (lazily evaluated) state is `DRAFT`, `PENDING_APPROVAL` *(v0.2)* or `CONFIRMED` (not
+  already `CANCELLED`, and not `EXPIRED` or `REJECTED`).
 - `now < screening.starts_at`.
 
 **Success postcondition:** reservation `state = CANCELLED`, `cancelled_at = now`; every
 `reservation_seats` row of it `state = CANCELLED`. The row is **not** deleted; `id`,
 `user_id`, `created_at`, and (if it had one) `confirmed_at` are retained.
 
-**State change:** `DRAFT` → `CANCELLED`, or `CONFIRMED` → `CANCELLED`.
+**State change:** `DRAFT` → `CANCELLED`, `PENDING_APPROVAL` → `CANCELLED` *(v0.2)*, or
+`CONFIRMED` → `CANCELLED`.
 
 **Referenced business rule(s) / invariant(s):** Definition of Occupied (a cancelled
 reservation's seats stop counting as occupied immediately); the cancellation policy (BR-03),
@@ -286,7 +319,7 @@ requirement for `reservations` and `reservation_seats`.
 ### Main success scenario
 1. Client requests cancel on a reservation id.
 2. System loads the reservation together with its screening's `starts_at`.
-3. System confirms the (lazy) state is `DRAFT` or `CONFIRMED`, and that the screening has
+3. System confirms the (lazy) state is `DRAFT`, `PENDING_APPROVAL` or `CONFIRMED`, and that the screening has
    not started.
 4. System writes `CANCELLED` + `cancelled_at = now` to the reservation and to every one of
    its `reservation_seats` rows, in one transaction.
@@ -294,7 +327,7 @@ requirement for `reservations` and `reservation_seats`.
 
 ### Alternative / failure outcomes
 - Unknown `reservation_id` → `404`.
-- Reservation already `CANCELLED` → `409` — see Assumption below.
+- Reservation already `CANCELLED`, or *(v0.2)* `REJECTED` → `409` — see Assumption below.
 - Reservation is `EXPIRED` (lazily derived) → `409`; the state diagram in
   the README shows no `cancel()` arrow leaving `EXPIRED`, so this is a direct reading of an
   existing diagram, not a new assumption.
@@ -305,6 +338,8 @@ requirement for `reservations` and `reservation_seats`.
   Check Availability call on that screening shows its seats `free`.
 - Cancel a reservation whose screening's `starts_at` is one second in the past → `409`.
 - Cancel a reservation that is already `CANCELLED` → `409`.
+- *(v0.2)* Cancel a `PENDING_APPROVAL` reservation an hour before its screening → `200`; its
+  seats read `free`, and a later Approve on it → `409`.
 
 ### Rationale / source
 `intent-and-change.md` Core operations table ("allowed until the screening starts");
@@ -315,6 +350,93 @@ README state diagram; ADR-005.
   in OP-03, decided the same way (`409`, not idempotent) for the same reason — a client
   cannot distinguish a genuine re-cancel from a retried request if both return `200`. Listed
   as open rather than settled by evidence, exactly like OP-03's twin case.
+
+## OP-05 — Approve Reservation *(v0.2)*
+
+**Goal / user value:** let a box office operator decide on a reservation for seats that need
+approval, so that the viewer either gets the seats or knows they will not.
+
+**Trigger:** `POST /reservations/{reservation_id}/decision` by a box office operator, with a
+decision of `approve` or `reject`.
+
+**Observable requirement(s):** `200` with the reservation's id and new state — `CONFIRMED`
+(plus `confirmed_at`) for `approve`, `REJECTED` for `reject` — or a documented failure.
+
+**Preconditions:**
+- The caller is acting as a box office operator. How that is established is **not** part of
+  this baseline (see Assumption below).
+- The reservation exists.
+- Its (lazily evaluated) state is `PENDING_APPROVAL` — i.e. stored `PENDING_APPROVAL` **and**
+  `now < screening.starts_at`.
+
+**Success postcondition:**
+- `approve`: reservation `state = CONFIRMED`, `confirmed_at = now`; every one of its
+  `reservation_seats` rows `state = CONFIRMED`; BR-02 still holds.
+- `reject`: reservation `state = REJECTED`; every one of its `reservation_seats` rows
+  `state = REJECTED`; its seats stop being occupied. The row is kept.
+
+**State change:** `PENDING_APPROVAL` → `CONFIRMED`, or `PENDING_APPROVAL` → `REJECTED`.
+
+**Referenced business rule(s) / invariant(s):** Definition of Occupied; BR-01 (the
+`now < starts_at` boundary); BR-02 — an approval is a transition into `CONFIRMED`, so it goes
+through the same guarded write as Confirm (`uq_confirmed_seat_per_screening`); BR-03 (`REJECTED`
+is terminal); ADR-005 (reservation and seat rows change together, in one transaction); the
+`NotificationService` rule (a failed notification never fails an approval).
+
+### Main success scenario
+1. Operator opens a `PENDING_APPROVAL` reservation and submits a decision.
+2. System begins a transaction and re-reads the reservation: stored state is
+   `PENDING_APPROVAL` and the screening has not started.
+3. `approve`: system writes `CONFIRMED` and `confirmed_at = now` to the reservation and
+   `CONFIRMED` to every one of its seat rows, in the same transaction; the unique index is
+   checked at commit, exactly as in Confirm.
+   `reject`: system writes `REJECTED` to the reservation and to every one of its seat rows.
+4. On commit of an approval, system calls
+   `NotificationService.reservation_confirmed(reservation)` and ignores its outcome.
+5. System returns `200` with the new state.
+
+### Alternative / failure outcomes
+- Unknown `reservation_id` → `404`.
+- Caller is not a box office operator → `403`.
+- Reservation is not `PENDING_APPROVAL` (`DRAFT`, `CONFIRMED`, `CANCELLED`, `REJECTED`,
+  `EXPIRED`) → `409`; the reason names the current state. This covers deciding twice and
+  losing a race against Cancel: whichever transaction commits first wins, the other sees the
+  new state and gets `409`.
+- `now >= screening.starts_at` (the pending approval has expired) → `409`; the reservation
+  reads as `EXPIRED` and holds no seats.
+- The database rejects an approval because a seat is already `CONFIRMED` elsewhere → `409`;
+  nothing of this reservation becomes `CONFIRMED`. (Not expected while pending reservations
+  block their seats; kept because the guarantee must not depend on that.)
+- Decision is neither `approve` nor `reject` → `422`.
+
+### Verification examples
+- `PENDING_APPROVAL`, `approve` → `200 CONFIRMED`; seats read `occupied`; a second `approve`
+  → `409`.
+- `PENDING_APPROVAL`, `reject` → `200 REJECTED`; the seats read `free`; a later `approve` →
+  `409`.
+- Approval is **delayed**: a reservation stays `PENDING_APPROVAL` for hours and its seats
+  read `occupied` throughout (it does not expire with the 15-minute hold).
+- Approve one second after the screening's `starts_at` → `409`, and the reservation reads
+  `EXPIRED`.
+- Cancel and approve arrive together for the same `PENDING_APPROVAL` reservation → exactly
+  one `200`, the other `409`.
+- A caller who is not a box office operator submits a decision → `403`; state unchanged.
+
+### Rationale / source
+The change card: some resources require approval by an authorised person before a
+reservation may be `CONFIRMED`, and the approval may be delayed, rejected or expire.
+Expiry is tied to the screening's start (`starts_at`) so no timeout value has to be
+invented.
+
+### Assumption / unknown / TBD
+- **How a caller is recognised as a box office operator.** The baseline application has no
+  roles at all — anyone can act as any user. This slice specifies the observable outcome
+  (`403`) but not the mechanism; it is the first thing C03 must decide.
+- **Deciding twice** is `409`, not idempotent — the same reasoning as double-confirm in OP-03.
+- **Whether the viewer is told of a rejection.** Not specified (see OP-03's notification
+  assumption).
+
+---
 
 ## Shared Business Rules / Invariants
 
@@ -352,18 +474,20 @@ Enforced by: `uq_confirmed_seat_per_screening` (ADR-004), proven race-safe by th
 `DRAFT` holds, not only `CONFIRMED` reservations (policy settled; the database mechanism for
 the `DRAFT` side is not yet built — see OP-01's Assumption/TBD).
 
+*(v0.2)* The index covers `CONFIRMED` only. A `PENDING_APPROVAL` reservation is kept
+exclusive by the Definition of Occupied (create refuses occupied seats), not by a constraint.
+
 Applies to: OP-01 (create must not hand out an already-held seat), OP-02 (this is exactly
-what "occupied" reports), OP-03 (this is what the database constraint enforces).
+what "occupied" reports), OP-03 and OP-05 (this is what the database constraint enforces).
 
 ### BR-03 — Cancellation policy
 
-A `DRAFT` or `CONFIRMED` reservation may be cancelled — by its owner, or by a box office
+A `DRAFT`, `PENDING_APPROVAL` *(v0.2)* or `CONFIRMED` reservation may be cancelled — by its owner, or by a box office
 operator on request — at any time before the screening starts (`now < screening.starts_at`,
 BR-01's closed-start convention). Cancellation is a state transition to `CANCELLED`, never a
 physical delete: the row, its `id`, and its history (`created_at`, `confirmed_at` if any)
-are retained. `CANCELLED` and `EXPIRED` are both terminal — neither accepts any further
-transition, so cancelling an already-`CANCELLED` or already-`EXPIRED` reservation is
-rejected, not a no-op.
+are retained. `CANCELLED`, `EXPIRED` and *(v0.2)* `REJECTED` are all terminal — none accepts
+any further transition, so cancelling one of them is rejected, not a no-op.
 
 Applies to: OP-04 (its own rule), OP-01 and OP-03 (both share the same
 `now < screening.starts_at` boundary and the same "only `DRAFT`/`CONFIRMED` may still be

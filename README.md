@@ -25,20 +25,23 @@ A reservation system for cinema seats, built for SWI. The reserved resource is a
 
 **Resource:** `Seat` (hall, row, number) — occupied for the duration of the screening.
 **Reservation:** one viewer's claim on 1..N seats of one screening.
-**States:** `DRAFT` → `CONFIRMED` → `CANCELLED`, plus `EXPIRED` when a hold runs out.
+**States:** `DRAFT` → `CONFIRMED` → `CANCELLED`, plus `EXPIRED` when a hold runs out. Seats that
+need approval (v0.2) go `DRAFT` → `PENDING_APPROVAL` → `CONFIRMED` or `REJECTED`; the full
+lifecycle is in [docs/diagrams.md](docs/diagrams.md).
 
 ```
-          create()                        confirm()
-   O ---------------> DRAFT ----------------------------> CONFIRMED
-                        |   hold_until = now + 15 min           |
-     hold expired       |                                       | cancel()
-                        +-------------> EXPIRED                 | (until screening starts)
-                        |                                       |
-          cancel()      +-------------> CANCELLED <-------------+
+create   : [start] -> DRAFT
+confirm  : DRAFT -> CONFIRMED                       (no seat needs approval)
+           DRAFT -> PENDING_APPROVAL                (a seat needs approval)
+approve  : PENDING_APPROVAL -> CONFIRMED
+reject   : PENDING_APPROVAL -> REJECTED
+cancel   : DRAFT | PENDING_APPROVAL | CONFIRMED -> CANCELLED   (until the screening starts)
+derived  : DRAFT (hold passed) -> EXPIRED;  PENDING_APPROVAL (screening started) -> EXPIRED
 ```
 
-**Occupied** = a seat with a `CONFIRMED` reservation, *or* a `DRAFT` one whose 15-minute
-hold is still running. Both business rules stand on this one definition.
+**Occupied** = a seat with a `CONFIRMED` reservation, a `DRAFT` one whose 15-minute hold is
+still running, *or* a `PENDING_APPROVAL` one while the screening has not started. Both business
+rules stand on this one definition.
 
 **Common rule.** Two confirmed reservations for the same seat must not overlap in time.
 Enforced by the database — see [ADR-004](docs/architecture-and-decisions.md#adr-004--double-booking-is-prevented-by-a-database-constraint-not-application-code).
