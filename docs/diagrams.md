@@ -14,9 +14,9 @@ signed either off yet; tick the box when you have read the spec, `c02-review.md`
 `c02-change-impact.md` and these diagrams and accept them as the baseline.
 
 - [x] Jan Procházka
-- [ ] Jiří Ševeček
+- [x] Jiří Ševeček
 - [ ] Šimon Adámek
-- [ ] Stanislav Urban
+- [x] Stanislav Urban
 
 ## 1. Use cases — actors and goals
 
