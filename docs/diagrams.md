@@ -15,7 +15,7 @@ signed either off yet; tick the box when you have read the spec, `c02-review.md`
 
 - [x] Jan Procházka
 - [x] Jiří Ševeček
-- [ ] Šimon Adámek
+- [x] Šimon Adámek
 - [x] Stanislav Urban
 
 ## 1. Use cases — actors and goals
