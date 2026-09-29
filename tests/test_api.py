@@ -128,3 +128,11 @@ def test_double_confirm_is_409(client):
     assert client.post(f"/reservations/{first}/confirm").status_code == 200
     assert client.post(f"/reservations/{second}/confirm").status_code == 409
     assert client.get(f"/reservations/{second}").json()["state"] == "DRAFT"
+
+
+def test_seed_text_is_read_as_utf8(client):
+    """On Windows read_text() without an encoding used cp1250 and stored 'pĂˇdu TrĂłje'."""
+    movies = client.get("/movies").json()
+    assert any("pádu Tróje se král" in m["description"] for m in movies)
+    for movie in movies:
+        assert not any(bad in movie["title"] + movie["description"] for bad in ("Ă", "Ĺ", "Ä"))

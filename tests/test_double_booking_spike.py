@@ -53,7 +53,7 @@ def db_path(tmp_path):
     """Fresh schema + one screening, one contested seat, two DRAFT reservations."""
     path = tmp_path / "cinema.sqlite3"
     with _connect(path) as conn:
-        conn.executescript(SCHEMA.read_text())
+        conn.executescript(SCHEMA.read_text(encoding="utf-8"))
         conn.execute(
             "INSERT INTO users (id, email) VALUES (1, 'a@example.com'), (2, 'b@example.com')"
         )
