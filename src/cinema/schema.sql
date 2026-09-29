@@ -21,7 +21,12 @@ CREATE TABLE users (
 CREATE TABLE movies (
     id               INTEGER PRIMARY KEY,
     title            TEXT NOT NULL,
-    duration_minutes INTEGER NOT NULL CHECK (duration_minutes > 0)
+    duration_minutes INTEGER NOT NULL CHECK (duration_minutes > 0),
+    year             INTEGER,
+    genres           TEXT NOT NULL DEFAULT '[]',  -- JSON array of strings
+    description      TEXT NOT NULL DEFAULT '',
+    poster_url       TEXT,
+    csfd_url         TEXT
 );
 
 CREATE TABLE halls (

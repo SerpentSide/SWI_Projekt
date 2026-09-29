@@ -80,31 +80,60 @@ the selection.
 
 ## Running what exists today
 
-Today the repository contains the schema and the C01 engineering spike. The API itself is
-not implemented yet — that is CP1 work.
+The repository contains the schema, a simple FastAPI backend (`src/cinema/main.py`), a
+React frontend (`src/frontend/`) and the C01 engineering spike.
 
 ```bash
 python3 -m venv .venv
-./.venv/bin/pip install -r requirements-dev.txt
-./.venv/bin/python -m pytest tests/ -v          # runs the spike, SQLite file created in tmp_path
+./.venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+./.venv/bin/python -m pytest tests/ -v          # API tests + the spike, SQLite files in tmp_path
+./.venv/bin/uvicorn cinema.main:app --app-dir src --reload   # API on http://localhost:8000/docs
+npm --prefix src/frontend ci && npm --prefix src/frontend run dev   # UI on http://localhost:5173
 ```
 
-Expected output:
+Expected test output:
 
 ```
+tests/test_api.py::test_walking_skeleton PASSED
+tests/test_api.py::test_taken_seat_is_409 PASSED
+tests/test_api.py::test_orphan_seat_is_422 PASSED
+tests/test_api.py::test_unknown_screening_or_seat_is_404 PASSED
+tests/test_api.py::test_seed_has_no_hall_overlaps_or_orphans PASSED
+tests/test_api.py::test_double_confirm_is_409 PASSED
 tests/test_double_booking_spike.py::test_without_db_constraint_the_seat_is_sold_twice PASSED
 tests/test_double_booking_spike.py::test_with_db_constraint_the_seat_is_sold_once     PASSED
 ```
 
-The first test is meant to pass by *reproducing the double-booking bug* with the safety
-index dropped; the second shows the index preventing it. No external service to start or
-tear down — SQLite is a file, created fresh per test run by pytest's `tmp_path` fixture.
+The first spike test is meant to pass by *reproducing the double-booking bug* with the
+safety index dropped; the second shows the index preventing it. No external service to
+start or tear down — SQLite is a file, created fresh per test by pytest's `tmp_path` fixture.
+
+The API keeps its data in `cinema.sqlite3` in the repository root (override with the
+`CINEMA_DB` environment variable). On first start it creates the schema and loads demo
+data: `seed.sql` plus random screenings and already-reserved seats from `seed.py`. To wipe
+it and reseed: `PYTHONPATH=src ./.venv/bin/python -m cinema.main`.
+
+The frontend calls the API through Vite's dev proxy (`/api` → `localhost:8000`), so start
+the backend first.
+
+| Endpoint | |
+|---|---|
+| `POST /auth/login` `{email}` | returns `user_id` (user created on first login, no password yet) |
+| `GET /movies` | all movies |
+| `GET /screenings?movie_id=&date=` | screenings, optionally filtered |
+| `GET /screenings/{id}/availability` | every seat of the hall with `occupied` |
+| `POST /reservations` `{user_id, screening_id, seat_ids}` | 201 DRAFT hold · 404 · 409 taken · 422 orphan seat |
+| `GET /reservations/{id}` | reservation with its seats |
+| `GET /users/{id}/reservations` | a user's reservations |
+| `POST /reservations/{id}/confirm` | DRAFT → CONFIRMED (409 if expired or seat taken) |
+| `POST /reservations/{id}/cancel` | → CANCELLED (until the screening starts) |
 
 ## Repository layout
 
 ```
 README.md                            this file -- domain summary + walking skeleton
-requirements-dev.txt
+requirements.txt                     runtime deps (FastAPI)
+requirements-dev.txt                 test deps
 docs/
   intent-and-change.md               Project Frame, future pressure, change + review loop
   architecture-and-decisions.md      architecture sketch, ADR-001 .. ADR-007
@@ -112,6 +141,11 @@ docs/
 src/
   cinema/
     schema.sql                       tables + the partial unique index that ADR-004 rests on
+    seed.sql                         demo users, movies, halls, seats
+    seed.py                          random screenings + already-reserved seats
+    main.py                          the FastAPI app
+  frontend/                          React + Vite UI (see its own README)
 tests/
   test_double_booking_spike.py       the executed C01 spike
+  test_api.py                        walking skeleton + error paths
 ```
