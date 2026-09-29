@@ -13,7 +13,7 @@ diagram type allows it. The v0.1 diagrams are the same file at commit `1a7e2e6`.
 signed either off yet; tick the box when you have read the spec, `c02-review.md`,
 `c02-change-impact.md` and these diagrams and accept them as the baseline.
 
-- [ ] Jan Procházka
+- [x] Jan Procházka
 - [ ] Jiří Ševeček
 - [ ] Šimon Adámek
 - [ ] Stanislav Urban
