@@ -40,6 +40,19 @@ export interface CreatedReservation {
   hold_until: string
 }
 
+export interface AppNotification {
+  id: number
+  kind:
+    | 'RESERVATION_CONFIRMED'
+    | 'RESERVATION_PENDING_APPROVAL'
+    | 'RESERVATION_APPROVED'
+    | 'RESERVATION_REJECTED'
+    | 'NEW_MOVIE'
+  title: string
+  body: string
+  created_at: string
+}
+
 export class ApiError extends Error {
   status: number
 
@@ -79,4 +92,7 @@ export const api = {
     }),
   confirmReservation: (reservationId: number) =>
     post<{ reservation_id: number; state: string }>(`/reservations/${reservationId}/confirm`),
+  /** Undelivered notifications for the user; the server marks them delivered. */
+  deliverNotifications: (userId: number) =>
+    post<AppNotification[]>(`/users/${userId}/notifications/deliver`),
 }

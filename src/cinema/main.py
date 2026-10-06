@@ -7,6 +7,7 @@ Docs: http://localhost:8000/docs
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 from collections import defaultdict
@@ -19,11 +20,13 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from cinema.notifications import BrowserNotifications, NotificationService
 from cinema.seed import TZ, iso, seed_random
 
 HERE = Path(__file__).resolve().parent
 DB_PATH = Path(os.environ.get("CINEMA_DB", HERE.parents[1] / "cinema.sqlite3"))
 HOLD = timedelta(minutes=15)
+log = logging.getLogger("cinema")
 
 
 # --- database ---------------------------------------------------------------
@@ -97,6 +100,26 @@ def get_db():
 
 def now() -> str:
     return iso(datetime.now(UTC))
+
+
+# --- notifications (external boundary, see cinema/notifications.py) --------
+
+notifier: NotificationService = BrowserNotifications()
+
+
+def notify(event: str, *args) -> None:
+    """Call notifier.<event>(db, *args) AFTER the business transaction has committed.
+
+    Any failure is logged and swallowed: a failed notification never fails a reservation
+    (Project Frame, external boundary)."""
+    try:
+        conn = connect()
+        try:
+            getattr(notifier, event)(conn, *args)
+        finally:
+            conn.close()
+    except Exception:
+        log.exception("notification %s%r failed", event, args)
 
 
 # The ONE place that defines "occupied" (ADR-003): confirmed, or a draft whose hold
@@ -197,6 +220,16 @@ class DecisionIn(BaseModel):
     decision: Literal["approve", "reject"]
 
 
+class MovieIn(BaseModel):
+    title: str = Field(min_length=1)
+    duration_minutes: int = Field(gt=0)
+    year: int | None = None
+    genres: list[str] = []
+    description: str = ""
+    poster_url: str | None = None
+    csfd_url: str | None = None
+
+
 class ReservationIn(BaseModel):
     user_id: int
     screening_id: int
@@ -230,6 +263,22 @@ def list_movies(db=Depends(get_db)):
     for movie in movies:
         movie["genres"] = json.loads(movie["genres"])
     return movies
+
+
+@app.post("/movies", status_code=201)
+def add_movie(body: MovieIn, db=Depends(get_db)):
+    """Add a movie to the programme; every user is notified about it.
+
+    Like /decision, who may call this is not checked yet - the application has no roles."""
+    with write_tx(db):
+        movie_id = db.execute(
+            """INSERT INTO movies (title, duration_minutes, year, genres, description, poster_url, csfd_url)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (body.title, body.duration_minutes, body.year, json.dumps(body.genres, ensure_ascii=False),
+             body.description, body.poster_url, body.csfd_url),
+        ).lastrowid
+    notify("new_movie", movie_id)
+    return {"id": movie_id, **body.model_dump()}
 
 
 @app.get("/screenings")
@@ -356,6 +405,11 @@ def confirm_reservation(reservation_id: int, db=Depends(get_db)):
         raise HTTPException(409, "One of the seats was just confirmed by someone else")
     if expired:  # raised after the commit, so the EXPIRED state is kept
         raise HTTPException(409, "Reservation hold has expired")
+    # OP-03 step 5, after the commit.
+    if new_state == "CONFIRMED":
+        notify("reservation_confirmed", reservation_id)
+    else:
+        notify("reservation_pending_approval", reservation_id)
     return {"reservation_id": reservation_id, "state": new_state}
 
 
@@ -390,7 +444,27 @@ def decide_reservation(reservation_id: int, body: DecisionIn, db=Depends(get_db)
                 set_state(db, reservation_id, "REJECTED")
     except sqlite3.IntegrityError:  # the DB invariant (ADR-004)
         raise HTTPException(409, "One of the seats was just confirmed by someone else")
-    return {"reservation_id": reservation_id, "state": "CONFIRMED" if body.decision == "approve" else "REJECTED"}
+    approved = body.decision == "approve"
+    notify("reservation_approved" if approved else "reservation_rejected", reservation_id)
+    return {"reservation_id": reservation_id, "state": "CONFIRMED" if approved else "REJECTED"}
+
+
+@app.post("/users/{user_id}/notifications/deliver")
+def deliver_notifications(user_id: int, db=Depends(get_db)):
+    """The browser's poll: return the user's undelivered notifications and mark them
+    delivered, so each one pops up once. POST because it changes state."""
+    with write_tx(db):
+        rows = db.execute(
+            """SELECT id, kind, title, body, created_at FROM notifications
+               WHERE user_id = ? AND delivered_at IS NULL ORDER BY id""",
+            (user_id,),
+        ).fetchall()
+        if rows:
+            db.execute(
+                "UPDATE notifications SET delivered_at = ? WHERE user_id = ? AND delivered_at IS NULL AND id <= ?",
+                (now(), user_id, rows[-1]["id"]),
+            )
+    return rows
 
 
 if __name__ == "__main__":  # PYTHONPATH=src python -m cinema.main  -> wipe DB, reseed
