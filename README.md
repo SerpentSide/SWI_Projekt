@@ -58,8 +58,19 @@ Row A, 8 seats.  [X] occupied   [ ] free   [R] being reserved
   [X][X][ ][R][R][R][X][X]   REJECT -- A3 would be orphaned
 ```
 
-**Boundary.** `NotificationService` — a third-party provider reached over HTTP, stubbed
-behind an interface for CP1. A failed notification never fails a confirmed reservation.
+**Boundary.** `NotificationService` (`src/cinema/notifications.py`) — an interface the
+operations call after their transaction commits. Today's implementation delivers **browser
+notifications**: messages go to a `notifications` table, and the frontend polls for them and
+shows them with the browser's Notification API (bell icon in the header turns them on). A
+third-party e-mail/SMS provider would be another implementation of the same interface.
+A failed notification never fails a confirmed reservation.
+
+| Event | Who is notified |
+|---|---|
+| confirm ends `CONFIRMED` | the viewer — "Rezervace potvrzena" |
+| confirm ends `PENDING_APPROVAL` (VIP seat) | the viewer — "Rezervace uložena - čeká na schválení" |
+| box office approves / rejects | the viewer — "Rezervace schválena" / "Rezervace zamítnuta" |
+| a movie is added (`POST /movies`) | every user — "Nový film v programu" |
 
 ## CP1 walking skeleton
 
@@ -115,7 +126,8 @@ start or tear down — SQLite is a file, created fresh per test by pytest's `tmp
 The API keeps its data in `cinema.sqlite3` in the repository root (override with the
 `CINEMA_DB` environment variable). On first start it creates the schema and loads demo
 data: `seed.sql` plus random screenings and already-reserved seats from `seed.py`. To wipe
-it and reseed: `PYTHONPATH=src ./.venv/bin/python -m cinema.main`.
+it and reseed: `PYTHONPATH=src ./.venv/bin/python -m cinema.main` (needed after a schema
+change, e.g. the `notifications` table — the API only creates the schema in an empty file).
 
 The frontend calls the API through Vite's dev proxy (`/api` → `localhost:8000`), so start
 the backend first.
@@ -131,6 +143,9 @@ the backend first.
 | `GET /users/{id}/reservations` | a user's reservations |
 | `POST /reservations/{id}/confirm` | DRAFT → CONFIRMED (409 if expired or seat taken) |
 | `POST /reservations/{id}/cancel` | → CANCELLED (until the screening starts) |
+| `POST /reservations/{id}/decision` `{decision: approve\|reject}` | box office: PENDING_APPROVAL → CONFIRMED / REJECTED |
+| `POST /movies` `{title, duration_minutes, …}` | add a movie; notifies every user |
+| `POST /users/{id}/notifications/deliver` | the browser's poll: undelivered notifications, marked delivered |
 
 ## Repository layout
 
@@ -148,8 +163,10 @@ src/
     seed.sql                         demo users, movies, halls, seats
     seed.py                          random screenings + already-reserved seats
     main.py                          the FastAPI app
+    notifications.py                 NotificationService interface + browser implementation
   frontend/                          React + Vite UI (see its own README)
 tests/
   test_double_booking_spike.py       the executed C01 spike
   test_api.py                        walking skeleton + error paths
+  test_notifications.py              who gets notified, delivery, failure isolation
 ```

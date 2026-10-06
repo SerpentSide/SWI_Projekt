@@ -2,6 +2,7 @@ import * as React from 'react'
 import { X } from 'lucide-react'
 
 import { ApiError, api, type Seat } from '@/lib/api'
+import { requestNotificationCheck } from '@/lib/notifications'
 import { hasIsolatedFreeSeat } from '@/lib/seating'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/providers/auth-provider'
@@ -100,6 +101,7 @@ export function SeatMapModal({ title, subtitle, screeningId, onClose }: SeatMapM
       const { state } = await api.confirmReservation(reservation_id)
       setAwaitingApproval(state === 'PENDING_APPROVAL')
       setReserved(true)
+      requestNotificationCheck() // show the "confirmed" / "saved" notification right away
     } catch (err) {
       setServerError(err instanceof ApiError ? err.message : 'Rezervace se nezdařila.')
       setSelectedSeats(new Set())

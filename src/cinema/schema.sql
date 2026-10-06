@@ -5,6 +5,7 @@
 
 PRAGMA foreign_keys = ON;
 
+DROP TABLE IF EXISTS notifications;
 DROP TABLE IF EXISTS reservation_seats;
 DROP TABLE IF EXISTS reservations;
 DROP TABLE IF EXISTS screenings;
@@ -97,3 +98,20 @@ CREATE UNIQUE INDEX uq_confirmed_seat_per_screening
 
 -- Supporting index for the availability query.
 CREATE INDEX ix_reservation_seats_screening ON reservation_seats (screening_id, seat_id);
+
+-- Outbox of the browser NotificationService: one row per message for one user. The
+-- frontend polls and shows each row once as a browser notification; delivered_at marks
+-- rows already handed to a browser.
+CREATE TABLE notifications (
+    id           INTEGER PRIMARY KEY,
+    user_id      INTEGER NOT NULL REFERENCES users (id),
+    kind         TEXT    NOT NULL
+                 CHECK (kind IN ('RESERVATION_CONFIRMED', 'RESERVATION_PENDING_APPROVAL',
+                                 'RESERVATION_APPROVED', 'RESERVATION_REJECTED', 'NEW_MOVIE')),
+    title        TEXT    NOT NULL,
+    body         TEXT    NOT NULL,
+    created_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    delivered_at TEXT
+);
+
+CREATE INDEX ix_notifications_undelivered ON notifications (user_id) WHERE delivered_at IS NULL;
