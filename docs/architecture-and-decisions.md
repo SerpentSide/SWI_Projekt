@@ -399,3 +399,11 @@ Blocks and what they contain:
 The dotted arrow is an exception propagating from the database call back through the `with
 write_tx` block to the endpoint, not a call made by the database. There is no arrow to a
 notification service or an identity provider because this scenario uses neither.
+
+## A8. Question for the next step of C03
+
+| Item | Content |
+|---|---|
+| Question | What keeps `reservations` and `reservation_seats` in sync — and what happens when a new endpoint forgets to do it? |
+| Evidence | When the `UPDATE reservation_seats` fails, SQLite still lets `COMMIT` through, so the earlier `UPDATE reservations` would be saved (runtime trace in A3: `COMMIT: reached`). Only the `ROLLBACK` in `write_tx` (M:49-51) prevents that, and every endpoint has to remember to use it. |
+| Why it matters | One endpoint that skips it could leave a reservation `CONFIRMED` with its seats still `DRAFT` — and the unique index does not protect seats in that state (BR-02). |
