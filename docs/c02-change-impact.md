@@ -87,3 +87,5 @@ at Confirm; it waits in `PENDING_APPROVAL` for a box office operator's decision.
    through does not exist and needs a read model.
 4. **Notifications.** Someone should learn a decision is waiting, and the viewer that it was
    made. `NotificationService` has no such calls yet and does not exist in the code at all.
+   *Update: implemented in commit `fed5106` for the viewer (pending, approved, rejected); the
+   box office is still not notified. Refined as CV4 driver D4.*

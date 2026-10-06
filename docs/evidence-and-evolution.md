@@ -211,7 +211,7 @@ Rule applied: decide whether the *spec*, the *example* or the *implementation* i
 | 3 | Cancel checked "screening started" only for `CONFIRMED`; a `DRAFT` could be cancelled after start (spec BR-03 says both) | implementation | fixed → 409 |
 | 4 | Spec OP-01 said create's race-safety mechanism "has not been built". It has: create runs inside `BEGIN IMMEDIATE`, the same write lock confirm uses. 15 simultaneous-create rounds gave exactly one 201 every time | spec | see "Correction to OP-01" below |
 | 5 | Repo did not run on Windows: `zoneinfo` has no `Europe/Prague` without the `tzdata` package | environment | `tzdata` added to `requirements.txt` for Windows |
-| 6 | OP-03 step 5 calls `NotificationService`; **no such seam exists in the code** | implementation gap | **open** — see below |
+| 6 | OP-03 step 5 calls `NotificationService`; **no such seam exists in the code** | implementation gap | **open** — see below. *Update: implemented in commit `fed5106`* |
 | 7 | Spec said a rejected confirm on an expired hold must not rewrite the row; code writes `EXPIRED` | spec | the brief requires *observable* requirements; the stored column is not observable (reads give `EXPIRED` either way). Spec reworded, test now checks what is observable |
 | 8 | Spec said Create takes the viewer's **email**; API takes `user_id` issued by `/auth/login` | spec | the brief only says "Authorized User"; spec now says logged-in `user_id` |
 | 9 | Spec named error codes (`seat_taken`, `orphan_seat`, …) that no code returns | spec | the brief asks for failure *outcomes*, and warns against invented precision; codes removed, status + reason remain |
@@ -232,7 +232,8 @@ proven for the current stack and remains a C03 concern in a different form (see 
    for anyone else, but the application has no roles: anyone can act as any user, and Confirm and
    Cancel do not check ownership either. Left for C03 on purpose (a fake header would look like
    protection and not be any).
-2. **NotificationService** (mismatch 6): not implemented, not even as a stub, although OP-03 step 5 and
+2. *(Resolved in commit `fed5106`, except notifying the box office — see CV4 driver D4.)*
+   **NotificationService** (mismatch 6): not implemented, not even as a stub, although OP-03 step 5 and
    OP-05 call it. Also unspecified: who is told that a reservation is waiting for a decision, or was
    rejected.
 3. Double-confirm, double-cancel and deciding twice are non-idempotent (`409`) — decided in the spec,
@@ -271,7 +272,8 @@ Only ones with evidence behind them:
    pending). Expired rows stay and are re-evaluated on every read; a long-lived pending state also
    needs a work queue for the operator, which does not exist.
 4. **No boundary seam for notifications** — the one external system in the Project Frame has no place
-   in the code, and v0.2 adds two more moments that want a notification.
+   in the code, and v0.2 adds two more moments that want a notification. *Update: the seam exists
+   since `fed5106`; refined in CV4 as driver D4 (delivery and retry, not the seam).*
 5. **HTTP handling, business rules and SQL share one module** (`main.py`), which is why rules such as
    the no-orphan check exist twice (Python and the frontend copy in `seating.ts`) and why the
    approval branch had to touch several unrelated functions.

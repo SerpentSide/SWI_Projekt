@@ -162,12 +162,16 @@ live `DRAFT` holds count as occupied. See *Unknown* for why this is not obviousl
 | Call | When |
 |---|---|
 | `reservation_confirmed(reservation)` | After `DRAFT` -> `CONFIRMED` succeeds. |
-| `hold_expiring_soon(reservation)` | Shortly before `hold_until` passes. |
+| `reservation_pending_approval(reservation)` *(v0.2)* | After `DRAFT` -> `PENDING_APPROVAL` succeeds. |
+| `reservation_approved(reservation)` / `reservation_rejected(reservation)` *(v0.2)* | After an operator's decision is committed. |
+| `new_movie(movie)` | After a movie is added to the programme (every user). |
+| `hold_expiring_soon(reservation)` | Shortly before `hold_until` passes. *Not implemented: lazy expiry (ADR-003) has no moment to call it from.* |
 
 The cinema does not own it; it is a third-party e-mail/SMS provider reached over HTTP.
-It is therefore allowed to be slow, to fail, and to succeed twice. For CP1 it exists as a
-stub behind an interface, so that the boundary is real in the code even though the provider
-is not.
+It is therefore allowed to be slow, to fail, and to succeed twice. In the code it is an
+interface (`src/cinema/notifications.py`, commit `fed5106`) whose one implementation today
+delivers **browser notifications** through a `notifications` table that the frontend polls;
+an e-mail/SMS provider would be another implementation of the same interface.
 
 **A failed notification must never fail a confirmed reservation.** Selling the seat is the
 business outcome; telling the viewer about it is a side effect.

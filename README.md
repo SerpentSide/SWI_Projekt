@@ -19,6 +19,7 @@ A reservation system for cinema seats, built for SWI. The reserved resource is a
 | [docs/operations-specification.md](docs/operations-specification.md) | C02: full spec of the four core operations (Create, Check Availability, Confirm, Cancel) plus the shared business rules/invariants (BR-01 .. BR-04) |
 | [docs/c02-review.md](docs/c02-review.md) | C02: the acceptance-gate check for each operation, extracted from the spec so it can be reviewed on its own |
 | [docs/diagrams.md](docs/diagrams.md) | C02: use-case, lifecycle (state) and per-operation activity diagrams, with a table tracing each transition to spec text and a test |
+| [docs/c04-architecture-drivers.md](docs/c04-architecture-drivers.md) | CV4: refined architecture drivers D1–D5, the updated domain model, system responsibilities R1–R8 and the main decision question |
 | [docs/review.html](docs/review.html) | Team review page — every C01 decision with what it costs. Open it in a browser (double-click, no server needed). Written in Czech for the team. |
 
 ## The domain in one screen

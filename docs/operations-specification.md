@@ -240,13 +240,15 @@ Steps 1–2 are as above. Then:
 3. System sees that at least one of the reservation's seats requires approval.
 4. Instead of `CONFIRMED`, system writes `PENDING_APPROVAL` to the reservation and to every
    one of its `reservation_seats` rows, in the same transaction. `confirmed_at` stays empty.
-5. System returns `200` with state `PENDING_APPROVAL`. The seats remain occupied; nothing
+5. On commit, system calls `NotificationService.reservation_pending_approval(reservation)`
+   and ignores its outcome, as in step 5 above.
+6. System returns `200` with state `PENDING_APPROVAL`. The seats remain occupied; nothing
    else can take them while the decision is pending.
 
 `uq_confirmed_seat_per_screening` does not fire here (it covers `CONFIRMED` only); the seats'
 exclusivity while pending comes from the Definition of Occupied and from create's exclusivity.
-Whether anyone is notified that a decision is now needed is **not specified** — see the
-Assumption below.
+The viewer is notified that the reservation is saved and waiting; whether the **box office**
+is notified that a decision is needed is still **not specified** — see the Assumption below.
 
 ### Alternative / failure outcomes
 - Unknown `reservation_id` → `404`.
@@ -274,10 +276,10 @@ Assumption below.
   `CONFIRMED` (atomicity check).
 
 ### Assumption / unknown / TBD
-- *(v0.2)* **Who is told that a reservation is waiting for a decision.** Neither the box
-  office nor the viewer is specified to be notified when a reservation enters
-  `PENDING_APPROVAL`. The Project Frame's `NotificationService` has no call for it. Left
-  undecided on purpose; without it an operator has to look, not be told.
+- *(v0.2)* **Who is told that a reservation is waiting for a decision.** Decided for the
+  viewer: `NotificationService.reservation_pending_approval` tells them the reservation is
+  saved and waiting (commit `fed5106`). Still undecided for the **box office**: no operator is
+  notified, so an operator has to look, not be told (CV4 driver D3/D4).
 - **Confirming an already-`CONFIRMED` reservation.** Not stated anywhere in C01. We chose
   `409` (confirm is not idempotent in this baseline) over silently returning
   `200` again, because a caller receiving `200` twice for two different physical clicks
@@ -391,8 +393,8 @@ is terminal); ADR-005 (reservation and seat rows change together, in one transac
    `CONFIRMED` to every one of its seat rows, in the same transaction; the unique index is
    checked at commit, exactly as in Confirm.
    `reject`: system writes `REJECTED` to the reservation and to every one of its seat rows.
-4. On commit of an approval, system calls
-   `NotificationService.reservation_confirmed(reservation)` and ignores its outcome.
+4. On commit, system calls `NotificationService.reservation_approved(reservation)` or
+   `NotificationService.reservation_rejected(reservation)` and ignores its outcome.
 5. System returns `200` with the new state.
 
 ### Alternative / failure outcomes
@@ -434,8 +436,9 @@ invented.
   roles at all — anyone can act as any user. This slice specifies the observable outcome
   (`403`) but not the mechanism; it is the first thing C03 must decide.
 - **Deciding twice** is `409`, not idempotent — the same reasoning as double-confirm in OP-03.
-- **Whether the viewer is told of a rejection.** Not specified (see OP-03's notification
-  assumption).
+- **Whether the viewer is told of a rejection.** Decided: yes, through
+  `NotificationService.reservation_rejected` (commit `fed5106`). Whether the box office is told
+  that a decision is waiting remains open (see OP-03's notification assumption).
 
 ---
 

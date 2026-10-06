@@ -21,7 +21,7 @@ Each ADR says what we picked, what it costs, and what would make us change our m
                    │                          uq_confirmed_seat_per_screening
                    │                          = the no-double-booking invariant
                    ▼
-              NotificationService (boundary, stubbed)
+              NotificationService (boundary; browser implementation since fed5106)
 ```
 
 Three layers, one outbound boundary. The rule that must never break is enforced at the
@@ -246,6 +246,13 @@ and the domain rules are demonstrated by tests rather than by a picture.
 
 Everything below was checked against the code, a test, or a runtime run. Line numbers refer to
 commit `a3e7a8e` (`main`); they will drift when `main.py` changes, the function names will not.
+
+> **Update after commit `fed5106` (notifications).** The trace below is the AS-IS at `a3e7a8e`
+> and is kept as recorded. Since `fed5106`, `NotificationService` exists
+> (`src/cinema/notifications.py`): `confirm_reservation` calls `notify(...)` after the
+> transaction has committed, so the "notify" step and the Notification Service dependency are
+> no longer absent. The rows affected are marked *Update*; the refined driver is D4 in
+> [`c04-architecture-drivers.md`](c04-architecture-drivers.md).
 "Runtime trace" means the output of [`docs/trace_confirm.py`](trace_confirm.py) (run `python -X utf8 docs/trace_confirm.py` from the repository root; reservation ids differ between runs because the demo data is random).
 
 ## A1. Scenario
@@ -272,7 +279,7 @@ Files: `src/cinema/main.py` (**M**), `src/cinema/schema.sql` (**S**).
 | evaluate the seat conflict (BR-02) | **not in application code** — raised by the unique index while the `UPDATE reservation_seats` runs | S:94-96, M:127; see A3 |
 | persist | `COMMIT` when the `with write_tx` block ends without an exception | M:52 |
 | answer the caller | `{"reservation_id", "state"}` with HTTP 200 | M:359 |
-| notify (`NotificationService.reservation_confirmed`) | **absent** — nothing in `src/cinema` mentions a notification | `grep -ri notif src/cinema` finds nothing; see findings |
+| notify (`NotificationService.reservation_confirmed`) | **absent** — nothing in `src/cinema` mentions a notification. *Update (`fed5106`): `notify("reservation_confirmed" \| "reservation_pending_approval", id)` after the `with write_tx` block; errors are logged and swallowed* | `grep -ri notif src/cinema` finds nothing at `a3e7a8e`; see findings |
 
 Tests that exercise this path: `TestConfirm::test_draft_becomes_confirmed_together_with_its_seats`
 (tests/test_c02_operations.py:245), `TestConfirmNeedingApproval::test_confirm_on_a_vip_seat_waits_for_a_decision`
@@ -310,7 +317,7 @@ keeps the two tables consistent. Also covered by
 | Specification | Implementation | Evidence |
 |---|---|---|
 | OP-03 step 4: the unique index "is checked at commit" | Checked when the `UPDATE reservation_seats` statement executes; `COMMIT` is not where it fails | runtime trace above; matches C01 evidence item 4 ("fails … before it can commit") |
-| OP-03 step 5: after commit, `NotificationService.reservation_confirmed` is called | No such call and no notification code exists | M:338-359 ends with `return`; `grep -ri notif src/cinema` is empty |
+| OP-03 step 5: after commit, `NotificationService.reservation_confirmed` is called | No such call and no notification code exists. *Update: resolved in `fed5106` — called after commit, on a separate connection* | M:338-359 ends with `return`; `grep -ri notif src/cinema` is empty |
 | *(C01 sketch, not v0.2)* "Architecture at a glance" above shows an API layer, a domain layer, a persistence layer and a stubbed `NotificationService` | One module. HTTP handling, business rules and SQL sit in the same functions (`confirm_reservation` receives, decides and maps the error) | M:1 ("deliberately one module, plain SQL, no ORM"), M:338-359 |
 | *(C01, not v0.2)* ADR-007 "No frontend in CP1" | A React frontend exists and calls this endpoint | `src/frontend/src/lib/api.ts:80` |
 
@@ -356,7 +363,7 @@ same write lock.
 |---|---|---|---|
 | SQLite (file database) | `connect()` opens `sqlite3.connect(DB_PATH)`; every SQL statement of the scenario | **All** parts: connection provider, transaction control, lookup functions, state writer, and the endpoint itself (it catches `sqlite3.IntegrityError`) | M:32-39, M:355 |
 | System clock | `now()` = `datetime.now(UTC)`, ISO-8601 strings compared as text | lookup functions (`is_expired`), `seed.iso` for the format | M:98-99, M:164-165; `src/cinema/seed.py` (`iso`) |
-| Notification Service | specified in OP-03 step 5, **not integrated** | nobody | no code (`grep`) |
+| Notification Service | specified in OP-03 step 5, **not integrated**. *Update (`fed5106`): `notify()` in `main.py` after commit, opening its own connection* | nobody. *Update: `notifications.py` (`BrowserNotifications` writes to the `notifications` table); `main.py` only knows the `NotificationService` interface* | no code (`grep`) at `a3e7a8e` |
 | IdP / authentication | none: Confirm does not identify the caller at all | nobody (login by email exists but is not part of this scenario) | M:338-339 has no user parameter |
 
 ## A7. AS-IS structural diagram

@@ -24,9 +24,9 @@ System boundary = the reservation API. Only goals that have a specified operatio
 The Project Frame also lets a box-office operator "look up a reservation"; that is not one of
 the baseline operations and is deliberately left out until it has an OP slice.
 
-`NotificationService` is drawn because it really exists (Project Frame, external boundary),
-and only where the spec makes the call: after a reservation becomes `CONFIRMED`, by Confirm
-or by Approve.
+`NotificationService` is drawn because it really exists (Project Frame, external boundary;
+implemented since commit `fed5106`), and only where the spec makes the call: after Confirm
+(`CONFIRMED` or `PENDING_APPROVAL`) and after an Approve decision (approved or rejected).
 
 ```mermaid
 flowchart LR
@@ -58,9 +58,9 @@ flowchart LR
 |---|---|---|
 | Create Reservation | Viewer | OP-01 |
 | Check Availability | Viewer, Box office operator | OP-02 |
-| Confirm Reservation | Viewer (+ NotificationService is called when it ends `CONFIRMED`) | OP-03 |
+| Confirm Reservation | Viewer (+ NotificationService is called when it ends `CONFIRMED` or `PENDING_APPROVAL`) | OP-03 |
 | Cancel Reservation | Viewer, Box office operator (BR-03) | OP-04 |
-| Approve Reservation *(v0.2)* | Box office operator (+ NotificationService on approval) | OP-05 |
+| Approve Reservation *(v0.2)* | Box office operator (+ NotificationService on approval and on rejection) | OP-05 |
 
 ## 2. Reservation lifecycle — state diagram
 
@@ -153,7 +153,8 @@ flowchart TD
     hold -- yes --> ap{does any seat<br/>require approval?}
     ap -- yes --> pend[UPDATE reservation AND all its seats<br/>to PENDING_APPROVAL]
     pend --> commitp[COMMIT]
-    commitp --> okp([200 PENDING_APPROVAL])
+    commitp --> notifyp[NotificationService.reservation_pending_approval<br/>outcome ignored]
+    notifyp --> okp([200 PENDING_APPROVAL])
     ap -- no --> upd[UPDATE reservation AND all its seats to CONFIRMED]
     upd --> uq{uq_confirmed_seat_per_screening<br/>violated?}
     uq -- yes --> rb[ROLLBACK - no seat confirmed]
@@ -195,13 +196,15 @@ flowchart TD
     t -- no --> e409b[/409 approval expired/]
     t -- yes --> which{decision}
     which -- reject --> rej[UPDATE reservation AND all its seats to REJECTED]
-    rej --> okr([200 REJECTED, seats free again])
+    rej --> commitr[COMMIT]
+    commitr --> notifyr[NotificationService.reservation_rejected<br/>outcome ignored]
+    notifyr --> okr([200 REJECTED, seats free again])
     which -- approve --> upd[UPDATE reservation AND all its seats to CONFIRMED]
     upd --> uq{uq_confirmed_seat_per_screening<br/>violated?}
     uq -- yes --> rb[ROLLBACK - nothing confirmed]
     rb --> e409c[/409 seat taken/]
     uq -- no --> commit[COMMIT]
-    commit --> notify[NotificationService.reservation_confirmed<br/>outcome ignored]
+    commit --> notify[NotificationService.reservation_approved<br/>outcome ignored]
     notify --> oka([200 CONFIRMED])
 ```
 
@@ -232,3 +235,6 @@ Each edge of the state diagram, traced to the text and to an executed test
 | `PENDING_APPROVAL → EXPIRED` at `starts_at` *(v0.2)* | OP-05 | `TestApprove::test_approval_after_the_screening_started_is_409_and_reads_expired`, `TestConfirmNeedingApproval::test_pending_reservation_of_a_started_screening_reads_as_expired_and_is_free` |
 | approve versus cancel race: always ends `CANCELLED` *(v0.2)* | OP-05 | `TestApprove::test_approve_and_cancel_arriving_together_always_end_cancelled` |
 | non-operator decision → `403` *(v0.2)* | OP-05 | *deferred to C03 — the application has no roles yet* |
+| viewer notified after confirm, once | OP-03 step 5 | `tests/test_notifications.py::test_confirm_notifies_the_viewer_once` |
+| viewer notified on pending, then on approval / rejection *(v0.2)* | OP-03 variant, OP-05 | `tests/test_notifications.py::test_vip_seat_notifies_saved_then_approved`, `::test_rejection_is_notified` |
+| a failed notification never fails the operation | OP-03 failure outcomes | `tests/test_notifications.py::test_failed_notification_never_fails_the_reservation` |
