@@ -14,7 +14,7 @@ A reservation system for cinema seats, built for SWI. The reserved resource is a
 | Document | Contains |
 |---|---|
 | [docs/intent-and-change.md](docs/intent-and-change.md) | Project Frame, selected future pressure, the C01 change + review loop |
-| [docs/architecture-and-decisions.md](docs/architecture-and-decisions.md) | Architecture sketch and ADR-001 … ADR-007 |
+| [docs/architecture-and-decisions.md](docs/architecture-and-decisions.md) | Architecture sketch and ADR-001 … ADR-008 |
 | [docs/evidence-and-evolution.md](docs/evidence-and-evolution.md) | C01 engineering spike: question, method, measured result, decision |
 | [docs/operations-specification.md](docs/operations-specification.md) | C02: full spec of the four core operations (Create, Check Availability, Confirm, Cancel) plus the shared business rules/invariants (BR-01 .. BR-04) |
 | [docs/c02-review.md](docs/c02-review.md) | C02: the acceptance-gate check for each operation, extracted from the spec so it can be reviewed on its own |

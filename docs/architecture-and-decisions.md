@@ -119,7 +119,7 @@ timestamps, which lazy evaluation cannot provide.
 
 ## ADR-004 — Double-booking is prevented by a database constraint, not application code
 
-**Status:** accepted — **backed by the C01 engineering spike**
+**Status:** accepted — **backed by the C01 engineering spike**; **refined by [ADR-008](#adr-008--where-is-the-confirmation-decision-enforced-so-that-br-02-stays-true-under-concurrency)** (the index stays as a safety net, the decision moves to one application component)
 
 **Context.** Two viewers may confirm the same seat at the same instant. We did not know
 whether a `SELECT`-then-write availability check in the application survives that.
@@ -239,6 +239,97 @@ runs.
 **Consequences.** Until then the seat map exists only as the `check availability` response,
 and the domain rules are demonstrated by tests rather than by a picture.
 
+
+
+---
+
+## ADR-008 — Where is the confirmation decision enforced so that BR-02 stays true under concurrency?
+
+**Status:** accepted — not implemented yet. Refines [ADR-004](#adr-004--double-booking-is-prevented-by-a-database-constraint-not-application-code):
+the unique index stays, but it is no longer the *only* authority.
+Analysis in [`c04-architecture-drivers.md`](c04-architecture-drivers.md) (Parts B–E3).
+
+**Context.** Today the conflict decision for BR-02 is made inside SQL. The partial unique index
+`uq_confirmed_seat_per_screening` rejects a second `CONFIRMED` seat; `DRAFT` and
+`PENDING_APPROVAL` seats are protected only by SQLite's global write lock (`BEGIN IMMEDIATE`)
+plus an occupancy query in Create. The decision *which transition is allowed* is repeated as an
+`if/elif` chain in the Confirm, Cancel and Decision endpoints, and the consistency of
+`reservations` and `reservation_seats` (ADR-005) depends on every endpoint remembering to use
+`write_tx` + `set_state`: SQLite does not abort a transaction on a failed statement, so only the
+explicit `ROLLBACK` keeps the two tables in sync (C03 Part A, A3 and A8).
+
+**Drivers.**
+- **D1** — authoritative conflict decision for exclusive seats, for every occupying state, not
+  only `CONFIRMED`.
+- **D2** — one atomic owner of state transitions (allowed transition + both rows + rollback).
+- **D3** — long-lived pending approval: four ways out (approve, reject, cancel, expiry), two of
+  which race (approve vs cancel, C02 mismatch 11).
+- **D4** — the notification is recorded after the commit, in a separate transaction, and can be
+  lost.
+
+**Alternative A — move the decision into one application-level owner.** A new
+`Reservation Lifecycle` component is the only code allowed to change a Reservation's state. It
+holds the transition rules (R1), checks occupancy for all occupying states (R2) and writes the
+reservation and its seats in one transaction (R3). Endpoints receive the request, call the
+component and map its result to HTTP; they make no decisions. The database keeps the unique
+index.
+
+**Alternative B — keep the decision in SQL and extend it.** The database becomes the complete
+authority: a new `seat_holds` table with `UNIQUE (screening_id, seat_id)` holds one row per
+occupying seat (`DRAFT`, `PENDING_APPROVAL`, `CONFIRMED`), and triggers keep `reservation_seats`
+in sync with `reservations` and remove holds on cancel, reject and expiry. Endpoints stay as they
+are and additionally map `IntegrityError` in Create to `409`.
+
+**Decision.** **Alternative A**, with two additions:
+1. **The unique index `uq_confirmed_seat_per_screening` is kept** as a safety net. A bug in the
+   component then surfaces as a `409`, not as a silent double booking. 
+2. **Transitions are written as conditional updates** —
+   `UPDATE reservations SET state = :new WHERE id = :id AND state = :expected`, and 0 changed
+   rows means `409`. The component then does not depend on SQLite's global lock to decide the
+   approve-vs-cancel race; the same code is correct on a database with concurrent writers.
+
+**Reason.**
+- The running scenario (C04 E3, stop 6b) shows that B does **not** remove the need for a
+  state-machine check: its unique constraint separates *different* reservations, but two
+  concurrent requests on the *same* reservation (approve vs cancel) still need "is this
+  transition allowed", which in B would have to be written as SQL triggers or in every endpoint.
+  A writes it once.
+- A addresses D2, D3 and D4 as well as D1: every transition passes through one component, so the
+  approval lifecycle has one owner and the notification row can be written in the **same
+  transaction** as the state change (outbox), closing the D4 gap. B answers D1 fully and D2
+  only for row consistency.
+- B stores occupancy, so every way out of an occupying state must delete it. A unique index cannot
+  contain time (SQLite rejects `datetime('now')` in an index at write time), so an expired
+  `DRAFT` hold would keep blocking its seat until a cleanup ran — ending ADR-003's "no background
+  job". A derives occupancy from state and time and has nothing to clean up.
+- The rules stay in Python, readable and unit-testable without SQL, and do not have to be rewritten
+  in another trigger dialect if the database changes (ADR-002 keeps a switch to PostgreSQL open). B's
+  triggers and `seat_holds` maintenance are SQLite-specific.
+
+**Accepted negative consequences.**
+- **A refactor of `main.py`:** Create, Confirm, Cancel and Decision must all go through the new
+  component; the duplicated `if/elif` chains and `IntegrityError` → `409` mappings move into it.
+- **"Only writer" is a convention, not a guarantee.** Python cannot stop another module from
+  running its own `UPDATE reservations`. It is enforced by structure, code review and a test that
+  runs the approve-vs-cancel race through the component.
+- **Exclusivity of `DRAFT` and `PENDING_APPROVAL` still depends on the database serialising
+  writers.** The occupancy check and the insert in Create remain a check-then-write; on SQLite
+  the global write lock makes it safe. On a database with concurrent writers the component must
+  lock the seats it is about to occupy (e.g. `SELECT … FOR UPDATE` on the seat rows, or a
+  per-screening lock row). The rules are portable; the locking is in one place, but it is not
+  free.
+- **The database guarantees less than in B:** only `CONFIRMED` has a constraint behind it; the
+  other occupying states are protected by application code.
+
+**Reconsider when.**
+- The application moves to a database with concurrent writers (PostgreSQL, ADR-002) — then
+  decide the seat-locking strategy for Create explicitly, or add a database constraint over all
+  occupying states (e.g. PostgreSQL's `EXCLUDE` constraint), which would move part of B back in.
+- A second writer of reservation state appears outside the component (another service, a
+  batch job, an admin tool) — the "only writer" convention no longer holds and the guarantee
+  must move back into the database.
+- Overlapping screenings in one hall become possible (ADR-004's assumption) — then the
+  conflict check needs time ranges, not just `screening_id`.
 
 ---
 

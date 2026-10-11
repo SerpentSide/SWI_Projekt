@@ -261,3 +261,194 @@ them. Today they are all inside `main.py`, and several of them are repeated per 
 |---|---|---|---|
 | **Alternative A** | transition rules and conflict handling move from each endpoint into one component | `Reservation Lifecycle` component | duplicated `if/elif` and `IntegrityError` → 409 mapping in endpoints |
 | **Alternative B** | nothing moves in the application | `seat_holds` table + its unique constraint, sync triggers | reliance on the global write lock and on endpoints remembering `write_tx` |
+
+### Part E2 - Alternatives against the drivers
+
+Four drivers from Part B that the two alternatives answer differently. D5 (caller identity) is
+left out: both alternatives put the authorisation check in front of the transition in the same
+way, so it does not tell them apart.
+
+| Driver | Alternative A — decision in one application owner | Alternative B — decision stays in SQL, extended |
+|---|---|---|
+| **D1 — Authoritative conflict decision for exclusive seats** | The `Reservation Lifecycle` checks occupancy for `CONFIRMED`, live `DRAFT` and `PENDING_APPROVAL` in one query (today's `OCCUPIED_SEATS_SQL`) and then writes. This is correct only while check and write run under a lock that excludes other writers: today `BEGIN IMMEDIATE`. With concurrent writers (e.g. PostgreSQL) it would need `SELECT … FOR UPDATE` on the seat rows or a per-screening lock row; otherwise two requests both see "free" again. If the unique index is dropped, a bug in the component becomes a silent double booking; if it is kept, `CONFIRMED` still has a database backstop and the other states do not. | A `seat_holds` row with `UNIQUE (screening_id, seat_id)` is inserted for every occupying seat, so the database rejects a second `DRAFT`, `PENDING_APPROVAL` or `CONFIRMED` hold even without the global write lock and on any code path. The conflict appears as an `IntegrityError` at the `INSERT`, which Create must now also catch and map to `409` (today only Confirm and Decision do). Create's own occupancy query becomes an early, friendlier check instead of the guarantee. |
+| **D2 — One atomic owner of state transitions** | All transitions go through one function that checks the allowed transition, updates `reservations` and `reservation_seats` and owns the `ROLLBACK`. The duplicated `if/elif` chains in Confirm, Cancel and Decision and the two `IntegrityError` → `409` mappings disappear. Python cannot forbid another module from running its own `UPDATE`, so "only writer" is still enforced by structure and review, but there is one place to review and test instead of four. | An `AFTER UPDATE OF state ON reservations` trigger writes `reservation_seats.state` and adds/removes `seat_holds`. The reservation update and its seat updates become **one statement**, so the Part A A3 failure (first `UPDATE` kept, second failed, `COMMIT` reached) can no longer leave the two tables out of sync, even if an endpoint forgets `write_tx`. The *allowed-transition* rules stay duplicated in the endpoints, so the database guarantees consistency but not that the transition was legal (e.g. `REJECTED` → `CONFIRMED`) unless a `BEFORE UPDATE` trigger with `RAISE(ABORT)` also encodes the state machine in SQL. |
+| **D3 — Long-lived pending approval** | Approve, reject, cancel and the derived expiry at `starts_at` are methods of the same component, so the approve-vs-cancel race is decided in one place under one transaction (today: two endpoints that each re-read the state). Lazy expiry (ADR-003) stays as it is, because the component re-evaluates `now < hold_until` / `now < starts_at` on every read. An operator work queue is a new query next to it, not a new mechanism. | A unique index cannot contain time: SQLite accepts `WHERE … > datetime('now')` in a partial index but then rejects every write with "non-deterministic use of datetime() in an index" (checked on SQLite 3.53), and an index is never re-evaluated as time passes anyway. So a `seat_holds` row does not disappear when a `DRAFT` hold or a pending approval runs out. A seat with an expired hold stays blocked for the next Create until something deletes the row: Create must first `DELETE` expired holds for the requested seats in the same transaction, or a cleanup job must run — which brings the hold-expiry rule back into application code and ends ADR-003's "no background job". Approve has to switch the hold from pending to confirmed and Reject/Cancel delete it, all in triggers. |
+| **D4 — Notification after commit** | The component knows which transition just happened, so it can insert the `notifications` row **in the same transaction** as the state change (an outbox). A crash after commit no longer loses the message, and `deliver` (or a later e-mail dispatcher with retry) reads the outbox. Message texts, seat lists and Prague time formatting stay in Python. | The endpoints keep calling `notify()` after commit, so the D4 gap (message lost if the insert fails or the process stops in between) stays. To close it in SQL, an `AFTER UPDATE` trigger would have to insert the `notifications` row, which makes it atomic, but then the Czech message text, the seat list and the time-zone formatting either move into SQL or the row stores only the event and the text is rendered later at delivery. |
+
+
+### Part E3 - Running scenario: delayed approval with a concurrent cancel
+
+**Scenario** (C02, same as Part A): OP-03 Confirm Reservation with the v0.2 variant, completed
+later by OP-05 Approve. A viewer reserves seats **J5, J6** in the VIP row J
+(`requires_approval = 1`) for a screening that starts in three hours.
+
+**Complication — concurrency:** hours later the box office operator approves at the same moment
+as the viewer cancels. This is the race measured in C02 (mismatch 11,
+`test_approve_and_cancel_arriving_together_always_end_cancelled`). Required outcome: Cancel
+answers `200` in either order, Approve answers `200` or `409`, the reservation always ends
+`CANCELLED` with its seats free, and it never ends `CONFIRMED` after a `200` Cancel.
+
+Each stop says first what C02 requires (*must*), then how each alternative realises it.
+
+| Stop / event | Alternative A — decision in one application owner | Alternative B — decision stays in SQL, extended |
+|---|---|---|
+| **1. Viewer creates the reservation**<br>*must:* `DRAFT`, 15-minute hold, J5 and J6 read occupied | Endpoint calls `lifecycle.create(...)`. Under `BEGIN IMMEDIATE` it runs the occupancy query, inserts the reservation and its seat rows. Exclusivity of the `DRAFT` comes from the lock + query, as today. | Endpoint inserts the reservation and seat rows as today; the insert also creates two `seat_holds` rows. Exclusivity of the `DRAFT` now comes from `UNIQUE (screening_id, seat_id)` on `seat_holds`. |
+| **2. Confirm Reservation starts**<br>*must:* one transaction; stored state is `DRAFT` and the hold is still running | Endpoint calls `lifecycle.confirm(id)`; the transaction, the `DRAFT` check and the hold check (`now < hold_until`) are inside the component. The endpoint only maps the result to HTTP. | `confirm_reservation` opens `write_tx` and checks `DRAFT` and the hold itself, as today. |
+| **3. Approval is required**<br>*must:* `PENDING_APPROVAL`, no `confirmed_at`, seats stay blocked; viewer told "waiting" | The component sees a seat with `requiresApproval`, writes `PENDING_APPROVAL` to `reservations` and `reservation_seats`, and inserts the "waiting" notification row **in the same transaction**. | The endpoint decides `PENDING_APPROVAL` and runs one `UPDATE reservations`; the trigger updates `reservation_seats` and keeps the two `seat_holds` rows. After commit, `notify()` records the "waiting" message in its own transaction (lost if the process stops in between, D4). |
+| **4. Approval arrives later — 15 minutes pass, then hours**<br>*must:* the pending reservation is not on the hold clock; J5, J6 stay occupied | Occupancy is derived on every read: `PENDING_APPROVAL` occupies while `now < starts_at`, regardless of `hold_until`. Nothing has to run when the 15 minutes pass. | The `seat_holds` rows simply stay, so the seats stay blocked — correct here. (The same "rows stay" behaviour is what makes an expired *`DRAFT`* keep blocking a seat; see E2, D3.) |
+| **5. Another viewer tries to create on J5**<br>*must:* `409`, the pending reservation is untouched | The occupancy query in `lifecycle.create` finds the `PENDING_APPROVAL` row → `409`. Correct because the query and the insert run under the same write lock. | The `INSERT` into `seat_holds` violates the unique constraint → `IntegrityError` → Create must map it to `409` (a new mapping; today Create never sees `IntegrityError`). Correct on any code path, without relying on the lock. |
+| **6a. Complication — Approve commits first, Cancel right after**<br>*must:* Approve `200 CONFIRMED`, then Cancel `200 CANCELLED` (BR-03 allows cancelling `CONFIRMED`) | `lifecycle.approve` and `lifecycle.cancel` run one after the other under the write lock; each re-reads the state in its own transaction. Result `CANCELLED`, matching the test. | Same order of events through the endpoints and triggers: the approve `UPDATE` moves the holds to confirmed, the cancel `UPDATE` makes the trigger delete them. Result `CANCELLED`. |
+| **6b. Complication — Cancel commits first, Approve right after**<br>*must:* Cancel `200`, Approve `409`; never `CONFIRMED` | `lifecycle.approve` re-reads, sees `CANCELLED`, refuses → `409`. The "is this transition allowed" rule and the write are in one function, so on a database without a global lock it is written once as a conditional update (`… WHERE id = ? AND state = 'PENDING_APPROVAL'`, 0 rows → `409`) or `SELECT … FOR UPDATE`. | On today's SQLite the `decision` endpoint re-reads under `BEGIN IMMEDIATE`, sees `CANCELLED` → `409`. The unique constraint does **not** help here: both requests act on the *same* reservation. Without the global lock, both could read `PENDING_APPROVAL` and the later `UPDATE` would win — `CONFIRMED` after a `200` Cancel — unless every endpoint uses a conditional update or a `BEFORE UPDATE` trigger rejects `CANCELLED → CONFIRMED` with `RAISE(ABORT)`, i.e. the state machine is also written in SQL. |
+| **7. Viewer is notified of the outcome**<br>*must:* a failed notification never fails Approve or Cancel (INV-7) | In 6a the "approved" row is written in Approve's transaction, so it is never lost; the viewer then cancels and, as today, gets no cancel message. Adding a "cancelled" message is one line in `lifecycle.cancel`, because every transition passes through it. | In 6a `notify("reservation_approved")` runs after Approve's commit, as today: the viewer may see "Rezervace schválena" for a reservation they cancel a second later, and the message is lost if the process stops in between. A "cancelled" message has to be added to the cancel endpoint, or to a trigger. |
+| **8. Seats are free again**<br>*must:* J5, J6 read free; another viewer can now create on them | Nothing to clean up: `CANCELLED` does not occupy, so the next occupancy query sees the seats free. | The trigger on `→ CANCELLED` deletes both `seat_holds` rows. If that transition is missing from the trigger, the seats stay blocked for every future Create although the reservation is `CANCELLED`. |
+
+#### Verification — do both alternatives realise the required behaviour?
+
+| Required behaviour (C02) | Alternative A | Alternative B |
+|---|---|---|
+| Pending seats stay occupied for hours (stops 3–5) | yes — derived from state and `starts_at` | yes — the hold rows stay until a transition removes them |
+| Another viewer is refused (stop 5) | yes, **while** check and insert run under one write lock | yes, on any code path, by the unique constraint |
+| Race ends `CANCELLED`, never `CONFIRMED` after a `200` Cancel (stops 6a/6b) | yes — one guarded transition function | yes on today's SQLite (global lock); with concurrent writers only with conditional updates or a state-machine trigger in every path |
+| Notification failure never fails the operation (stop 7) | yes, and the message is durable (outbox in the same transaction) | yes, but the message can still be lost after commit, as today |
+| Seats free after cancel (stop 8) | yes — nothing stored to clean up | yes, if the trigger covers every transition that ends occupancy (cancel, reject, expiry) |
+
+**Different consequences exposed by the scenario.** Both alternatives can realise the C02
+behaviour on today's stack. The race (6b) shows what each one depends on: Alternative A needs
+its single transition function to be guarded against concurrent writers — one place to get
+right. Alternative B protects seat exclusivity between *different* reservations (stop 5) on any
+path, but not the state of *one* reservation under concurrent requests (stop 6b); that still
+needs the state-machine rule, which then has to exist in SQL or in every endpoint. Stops 4 and
+8 show B's other cost: occupancy is stored, so every way out of an occupying state must delete
+it, while A derives occupancy and has nothing to clean up.
+
+### Part E4 - Decision
+
+**Alternative A** is chosen — the confirmation decision moves into one application-level
+owner of the Reservation's state transitions, the unique index stays as a safety net, and
+transitions are written as conditional updates. Recorded with its reasons, accepted negative
+consequences and reconsider conditions as
+[ADR-008](architecture-and-decisions.md#adr-008--where-is-the-confirmation-decision-enforced-so-that-br-02-stays-true-under-concurrency).
+
+## Part G1 — Context diagram (current system)
+
+Note: `Reservation System` = the React
+web app **and** the FastAPI backend with its SQLite file; nothing inside it is drawn.
+
+```mermaid
+flowchart LR
+    subgraph people [People]
+        direction TB
+        viewer(["Viewer (moviegoer)<br/>reads the programme,<br/>manages only own reservations"])
+        operator(["Box office operator<br/>decides pending approvals"])
+        editor(["Programme editor (cinema staff)<br/>the only role that changes the programme"])
+    end
+
+    system["Reservation System"]
+
+    subgraph external [External systems]
+        direction TB
+        browser["Browser Notification API<br/>(browser / OS)"]
+        csfd["ČSFD<br/>(website)"]
+    end
+
+    viewer <-->|"→ read movies, screenings, seat map<br/>→ create / confirm / cancel OWN reservation<br/>← seat map, own reservation state, errors"| system
+    operator <-->|"→ approve / reject a pending reservation<br/>← CONFIRMED / REJECTED, or 409"| system
+    editor -->|"→ add a new movie"| system
+
+    system <-->|"→ notification title + text<br/>← permission granted / denied"| browser
+    system -.->|"stored link + poster URL<br/>(never called)"| csfd
+```
+
+Arrows: `→` is what goes **into** the system from the left, or **out of** it to the right;
+`←` is the answer. Dashed = data that points outside, but nothing is called.
+
+| Connection | What crosses the boundary | Today's mechanism |
+|---|---|---|
+| Viewer → System | **read only** for the programme: movies, screenings, seat availability. **Writes only their own reservation:** create, confirm, cancel. Login by e-mail. Cannot add or change movies or screenings | web app → HTTP API |
+| System → Viewer | seat map with an `occupied` flag per seat, reservation id and state, `hold_until`, failure reasons | HTTP responses shown in the web app |
+| Box office operator → System | decision `approve` / `reject` for one reservation (OP-05) | `POST /reservations/{id}/decision` directly — **no operator screen, no role check** (D5) |
+| Programme editor → System | a new movie — the **only** role that changes the programme | `POST /movies` directly — no screen; outside the Project Frame's scope, but the endpoint exists and triggers a `NEW_MOVIE` notification to every user |
+| System → Browser Notification API | title and body of each undelivered notification, once | the web app polls `POST /users/{id}/notifications/deliver` every 15 s and calls `new Notification(...)` |
+| Browser Notification API → System | whether the viewer allowed notifications | `Notification.requestPermission()` when the bell is clicked |
+| System ⇢ ČSFD | nothing is called; the movie record stores a ČSFD link and a poster URL that the viewer's browser opens / loads | static data from `seed.sql` |
+
+**Deliberately not in the diagram, because it does not exist today:**
+- **Identity provider.** Login is "an e-mail identifies the user, created on first login" —
+  no password, no IdP, no roles (`/auth/login`). This is driver D5.
+- **E-mail / SMS provider.** The Project Frame names a third-party provider behind
+  `NotificationService`; the only implementation is the browser one. A provider would be a
+  new external system on this boundary, replacing or joining the Browser Notification API.
+- **SQLite** is a file inside the system (ADR-002), not an external system.
+
+## Part G2 — Logical structure 
+
+Responsibilities R1–R8 from Part C2 grouped into six logical elements inside
+`Reservation System`. This is the **target** structure that ADR-008 decides. Elements are logical, not classes or
+deployables.
+
+```mermaid
+flowchart TB
+    viewer(["Viewer"])
+    operator(["Box office operator"])
+    editor(["Programme editor"])
+
+    subgraph system [Reservation System]
+        direction TB
+        api["<b>Web UI + HTTP API</b><br/>role: receive requests, return results as HTTP status;<br/>makes NO business decisions"]
+        access["<b>Access Control</b><br/>role: who is calling, may they do it<br/>owns: users and roles (INV-5, INV-6)<br/><i>planned — D5</i>"]
+        lifecycle["<b>Reservation Lifecycle</b> «ADR-008»<br/>role: the ONLY writer of Reservation state —<br/>transitions, seat conflict check, pending approval<br/>owns: Reservation lifecycle, BR-02 / INV-1 decision,<br/>INV-2, INV-4"]
+        occupancy["<b>Occupancy & Time</b><br/>role: Definition of Occupied, BR-01 intervals, now<br/>owns: occupancy rule (derived, never stored)"]
+        outbox["<b>Notification Outbox</b><br/>role: turn a committed transition into a message<br/>owns: pending messages"]
+        delivery["<b>Notification Delivery</b><br/>role: hand messages to the channel, mark delivered, retry<br/>owns: delivered state"]
+        store[("<b>Reservation Store (SQLite)</b><br/>role: durable state, transactions, serialises writers<br/>owns: uq_confirmed_seat_per_screening<br/>= safety net for BR-02 (ADR-008)")]
+    end
+
+    browser["Browser Notification API<br/>(external; e-mail/SMS later)"]
+
+    viewer -->|"read programme, own reservations"| api
+    operator -->|"approve / reject"| api
+    editor -->|"add a movie"| api
+
+    api -->|"authorise(caller, action)"| access
+    api ==>|"create / confirm / cancel / decide(id)"| lifecycle
+    api -->|"seat map (read only)"| occupancy
+    api -->|"deliver(user) — browser poll"| delivery
+
+    lifecycle -->|"occupied? hold alive? started?"| occupancy
+    lifecycle -->|"record(event), same transaction"| outbox
+    lifecycle ==>|"conditional UPDATE … WHERE state = :expected<br/>reservation + seats + outbox row, ONE transaction"| store
+
+    delivery -->|"notification title + text"| browser
+
+    api -. "NOT ALLOWED: direct reservation writes" .-x store
+
+    classDef adr stroke-width:3px
+    class lifecycle adr
+```
+
+### Responsibility → primary owner
+
+| Responsibility (Part C2) | Primary owner | Note |
+|---|---|---|
+| **R1** — decide whether a transition is allowed, target state | Reservation Lifecycle | one place instead of the `if/elif` in each endpoint |
+| **R2** — evaluate seat conflict, preserve BR-02 / INV-1 | Reservation Lifecycle | asks `Occupancy & Time` for the facts; the index in the store is only the backstop |
+| **R3** — apply a state change atomically to reservation + seats | Reservation Lifecycle | uses the store's transaction; endpoints no longer call `write_tx` / `set_state` |
+| **R4** — time-based facts: hold alive, screening started, derived `EXPIRED` | Occupancy & Time | also serves the read-only seat map (OP-02) |
+| **R5** — manage pending approval | Reservation Lifecycle | grouped with R1/R3 (Part C2): approve, reject, cancel and expiry are transitions of the same state |
+| **R6** — identify the caller, authorise | Access Control | **planned** — today there are no roles (D5) |
+| **R7** — record that a notification is due | Notification Outbox | called by the lifecycle **inside** its transaction |
+| **R8** — deliver notifications, retry | Notification Delivery | the only element that talks to the external channel |
+
+### Allowed dependencies
+
+| From → To | Interaction | Why it is allowed |
+|---|---|---|
+| Web UI + HTTP API → Access Control | `authorise(caller, action)` | every operation is checked before a transition is attempted (R6 in front of R1) |
+| Web UI + HTTP API → Reservation Lifecycle | `create / confirm / cancel / decide(id)` → new state or a refusal reason | the only way to change a reservation |
+| Web UI + HTTP API → Occupancy & Time | seat map (read only) | OP-02 changes nothing, so it does not need the lifecycle |
+| Web UI + HTTP API → Notification Delivery | `deliver(user)` (the browser's poll) | delivery is outside every business transaction |
+| Reservation Lifecycle → Occupancy & Time | is the seat occupied, is the hold alive, has the screening started | one Definition of Occupied for writes and reads |
+| Reservation Lifecycle → Notification Outbox | `record(event)` in the same transaction | the message cannot be lost after commit (D4) |
+| Reservation Lifecycle → Reservation Store | conditional `UPDATE`, one transaction | ADR-008 |
+| Notification Delivery → Browser Notification API | notification title + text | the only external call; its failure never reaches the lifecycle (INV-7) |
+
