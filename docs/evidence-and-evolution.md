@@ -280,3 +280,56 @@ Only ones with evidence behind them:
 
 Application, tests and specification for v0.1 and v0.2: see `git log` on branch `c02-evidence`;
 the v0.2 implementation is commit `36b7571`.
+
+
+---
+
+## C03 — Architecture Evidence
+
+Baseline: v0.2
+Part A: [`architecture-and-decisions.md`](architecture-and-decisions.md) (A1–A8), corrected after the notification commit `fed5106` (A2, A3, A6, A7).
+
+Drivers: D1 BR-02 under concurrency; D2 one owner of Reservation state and its two-table sync; D3 pending approval outlives the request; D4 a failing notification must not change the result. (No roles — recorded as a gap.)
+Decision question: who may change Reservation state, and where is the confirmation decision made so that BR-02 holds and both tables never diverge?
+Alternatives: A — Reservation Management module owns every transition; B — database cascade (composite FK, `ON UPDATE CASCADE`) with the guards left in handlers. B was checked in a small spike (a cascaded `UPDATE` that violates the unique index is undone, `COMMIT` leaves both tables consistent).
+Scenario walkthrough: Confirm of a VIP-seat reservation with a concurrent confirm of another reservation on the same seat — table in [`c03-architecture.md`](c03-architecture.md) E3.
+ADR: **ADR-008** (accepted: A).
+
+Views (all in [`c03-architecture.md`](c03-architecture.md)):
+- domain class — C1
+- context — G1
+- static architecture — G2
+- state ownership — G3
+- runtime/deployment — G4
+- design sequence — H1
+- focused design class — H2
+
+Cross-view issues found/resolved (section I): H1 first had Reservation Management calling the notification — contradicted G2/ADR, the call moved to the API after the command returned; `notify`/`deliver` were missing in H2; `Notification` in the domain model flagged as part of the delivery mechanism.
+AS-IS → TO-BE delta: six CHANGE rows (state writes, BR-02 mapping, HTTP vs domain errors, occupied/no-orphan, notify location, DB access), three KEEP, two VERIFY (lost notification after a crash, authorisation of `decide`).
+Implementation changes: new `reservations.py`, `availability.py`, `db.py`; `main.py` is now HTTP only; `notify`/`notifier`/`deliver` moved into `notifications.py`; tests changed only in their import/patch targets (`cinema.db.DB_PATH`, `cinema.notifications.notifier`, `cinema.availability`).
+
+Behaviour verification:
+
+| Check | Result | Evidence |
+|---|---|---|
+| before the change | 64 passed | `pytest` on `main` + `c04` base, 2026-10-12 |
+| success path (confirm → CONFIRMED / PENDING_APPROVAL), cancel, approve/reject | pass | `test_c02_operations.py::TestConfirm`, `TestConfirmNeedingApproval`, `TestCancel`, `TestApprove` |
+| failure: expired hold, seat conflict, multi-seat atomicity | pass | `test_multi_seat_conflict_leaves_no_seat_confirmed` |
+| concurrency | pass | `test_two_simultaneous_confirms_on_one_seat_give_exactly_one_200`, `test_double_booking_spike.py` |
+| notification failure never fails the reservation | pass | `test_failed_notification_never_fails_the_reservation` |
+| after the change | 68 passed (64 old + 4 new) | `python -m pytest -q` |
+| `docs/trace_confirm.py` (Part A trace) | same output as in A3 | run after the change |
+| running API | `GET /movies` 200, unknown reservation 404 `{"detail": "Reservation not found"}` | `curl` against the reloaded server |
+
+Architecture conformance rule + result:
+- Rule: only `reservations.py` (Reservation Management) may write to `reservations` / `reservation_seats` (`seed.py`, the demo loader, is the one declared exception); Reservation Management imports neither FastAPI nor `cinema.main` nor `cinema.notifications`.
+- Check: `tests/test_architecture.py` (text scan of `src/cinema/*.py`; `test_the_check_detects_a_violation` shows it can fail; also run once against the real tree with a stray `UPDATE reservations` appended to `main.py` — the test failed, then the line was removed).
+- Result: passes. A state change outside a transaction raises (`test_a_state_change_outside_a_transaction_is_refused`), which answers Part A8.
+
+Remaining uncertainty / risk:
+- The rule is a text scan: it would not see SQL built from string pieces. A database-level guard (alternative B's cascade) is recorded in ADR-008 as the next step.
+- A crash between `COMMIT` and `notify` loses the notification; no retry.
+- No authorisation: anyone can call `/decision` and `POST /movies`; OP-05's `403` is still not implemented.
+- The `Notification Service` of the Project Frame is, in the implementation, an outbox in our own database plus the browser; a real provider would need a transactional outbox.
+
+Commit/tag: branch `c04`, docs `14a7a5e`, code `2c47953` (evidence added after them).

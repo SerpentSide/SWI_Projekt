@@ -5,17 +5,22 @@ today, `BrowserNotifications`, writes each message to the `notifications` table;
 frontend polls for undelivered rows and shows them as browser notifications. A real
 e-mail/SMS provider would be another implementation of the same interface.
 
-Callers go through `cinema.main.notify`, which runs after the business transaction has
-committed and swallows every error: a failed notification never fails a reservation.
+Callers go through `notify` below, which runs after the business transaction has committed
+(the HTTP API calls it once the command has returned) and swallows every error: a failed
+notification never fails a reservation. Reservation Management does not know about this module.
 """
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from datetime import datetime
 from typing import Protocol
 
+from cinema.db import connect, now, write_tx
 from cinema.seed import TZ
+
+log = logging.getLogger("cinema")
 
 
 class NotificationService(Protocol):
@@ -77,3 +82,38 @@ class BrowserNotifications:
             "INSERT INTO notifications (user_id, kind, title, body) VALUES (?, ?, ?, ?)",
             (r["user_id"], kind, title, body),
         )
+
+
+notifier: NotificationService = BrowserNotifications()
+
+
+def notify(event: str, *args) -> None:
+    """Call notifier.<event>(db, *args) AFTER the business transaction has committed.
+
+    Any failure is logged and swallowed: a failed notification never fails a reservation
+    (Project Frame, external boundary). Runs in its own connection and transaction."""
+    try:
+        conn = connect()
+        try:
+            getattr(notifier, event)(conn, *args)
+        finally:
+            conn.close()
+    except Exception:
+        log.exception("notification %s%r failed", event, args)
+
+
+def deliver(db, user_id: int) -> list[dict]:
+    """The browser's poll: return the user's undelivered notifications and mark them
+    delivered, so each one pops up once."""
+    with write_tx(db):
+        rows = db.execute(
+            """SELECT id, kind, title, body, created_at FROM notifications
+               WHERE user_id = ? AND delivered_at IS NULL ORDER BY id""",
+            (user_id,),
+        ).fetchall()
+        if rows:
+            db.execute(
+                "UPDATE notifications SET delivered_at = ? WHERE user_id = ? AND delivered_at IS NULL AND id <= ?",
+                (now(), user_id, rows[-1]["id"]),
+            )
+    return rows

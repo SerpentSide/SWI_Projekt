@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-import cinema.main
+import cinema.notifications
 from test_c02_operations import client, create, decide, login, make_screening, pending, row_seats  # noqa: F401
 
 
@@ -71,7 +71,7 @@ def test_failed_notification_never_fails_the_reservation(client, monkeypatch):
                 raise RuntimeError("provider down")
             return fail
 
-    monkeypatch.setattr(cinema.main, "notifier", Broken())
+    monkeypatch.setattr(cinema.notifications, "notifier", Broken())
     user, rid = confirmed_reservation(client)  # asserts the confirm itself still succeeds
     assert client.get(f"/reservations/{rid}").json()["state"] == "CONFIRMED"
     assert deliver(client, user) == []
