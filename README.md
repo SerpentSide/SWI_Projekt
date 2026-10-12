@@ -162,11 +162,15 @@ src/
     schema.sql                       tables + the partial unique index that ADR-004 rests on
     seed.sql                         demo users, movies, halls, seats
     seed.py                          random screenings + already-reserved seats
-    main.py                          the FastAPI app
-    notifications.py                 NotificationService interface + browser implementation
+    main.py                          the FastAPI app: routes, validation, error -> status code (HTTP layer)
+    reservations.py                  Reservation Management: the only code that changes Reservation state (ADR-008)
+    availability.py                  definition of "occupied", no-orphan rule
+    db.py                            connection, write transaction, schema + seed loading
+    notifications.py                 NotificationService interface + browser implementation, notify()
   frontend/                          React + Vite UI (see its own README)
 tests/
   test_double_booking_spike.py       the executed C01 spike
   test_api.py                        walking skeleton + error paths
   test_notifications.py              who gets notified, delivery, failure isolation
+  test_architecture.py               C03: only reservations.py writes Reservation state
 ```
