@@ -21,6 +21,7 @@ A reservation system for cinema seats, built for SWI. The reserved resource is a
 | [docs/diagrams.md](docs/diagrams.md) | C02: use-case, lifecycle (state) and per-operation activity diagrams, with a table tracing each transition to spec text and a test |
 | [docs/c02-change-impact.md](docs/c02-change-impact.md) | C02: impact analysis of the approval change (v0.1 → v0.2), done before the specification was edited |
 | [docs/c03-architecture.md](docs/c03-architecture.md) | C03: drivers, responsibilities, decision question, alternatives, ADR-008 decision, context / static / runtime / sequence / class views, cross-view check, AS-IS → TO-BE delta |
+| [docs/where-to-find-what.md](docs/where-to-find-what.md) | Navigation map: ADRs, drivers, operations, rules -> where they live in docs, code and tests |
 | [docs/review.html](docs/review.html) | Team review page — every C01 decision with what it costs. Open it in a browser (double-click, no server needed). Written in Czech for the team. |
 
 ## The domain in one screen
