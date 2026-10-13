@@ -101,6 +101,14 @@ the selection.
 The repository contains the schema, a simple FastAPI backend (`src/cinema/main.py`), a
 React frontend (`src/frontend/`) and the C01 engineering spike.
 
+On Windows, one command does everything (venv, dependencies, backend and frontend); Ctrl+C stops both:
+
+```powershell
+.\start.ps1
+```
+
+Or step by step:
+
 ```bash
 python3 -m venv .venv
 ./.venv/bin/pip install -r requirements.txt -r requirements-dev.txt
