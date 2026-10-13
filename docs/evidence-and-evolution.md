@@ -166,8 +166,7 @@ No external service to start -- SQLite is a file, created fresh per test by pyte
 # Evidence C02: specification → running application
 
 **Status:** baseline v0.1 and the approval change (baseline v0.2) are specified, drawn, implemented
-and tested. What is **not** done: sign-off by the whole team (1 of 4 members has ticked the box),
-a role check for the box office operator, and `NotificationService`.
+and tested. Both baselines are approved by the whole team (4 of 4 sign-offs in `diagrams.md`, confirmed 2026-10-13). Not done in C02: a role check for the box office operator (still open after C03, see the risks in the C03 evidence); `NotificationService` was added later and is covered in C03.
 
 ## Accepted baseline
 

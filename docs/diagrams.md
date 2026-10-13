@@ -9,9 +9,7 @@ These are the **v0.2** diagrams (approval change, see [`c02-change-impact.md`](c
 Elements added by v0.2 are marked *(v0.2)* in the text and drawn with a dashed line where the
 diagram type allows it. The v0.1 diagrams are the same file at commit `1a7e2e6`.
 
-**Baseline status: Specification Baseline v0.1 and v0.2 — awaiting team approval.** Nobody has
-signed either off yet; tick the box when you have read the spec, `c02-review.md`,
-`c02-change-impact.md` and these diagrams and accept them as the baseline.
+**Baseline status: Specification Baseline v0.1 and v0.2 — approved by the team (2026-10-13).** Each member ticked the box after reading the spec, `c02-review.md`, `c02-change-impact.md` and these diagrams.
 
 - [x] Jan Procházka
 - [x] Jiří Ševeček
