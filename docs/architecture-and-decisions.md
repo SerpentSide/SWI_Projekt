@@ -225,7 +225,10 @@ telling us aisle-adjacent singles do sell.
 
 ## ADR-007 — No frontend in CP1
 
-**Status:** accepted
+**Status:** accepted for the CP1 path, overtaken in practice — a React frontend (`src/frontend/`)
+was built anyway (started 2026-09-15, connected to the API 2026-09-28; recorded as a mismatch in
+C03 Part A, A3). The CP1 walking skeleton and its automated check (README) are still API-only and
+do not need the frontend.
 
 **Context.** A seat map is the obvious UI for this domain and is tempting to start early.
 

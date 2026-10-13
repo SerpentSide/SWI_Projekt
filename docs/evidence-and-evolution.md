@@ -332,3 +332,10 @@ Remaining uncertainty / risk:
 - The `Notification Service` of the Project Frame is, in the implementation, an outbox in our own database plus the browser; a real provider would need a transactional outbox.
 
 Commit/tag: tag `c03-architecture` = commit `817fdd2` (docs `14a7a5e`, code `2c47953`, evidence `817fdd2`); merged to `main` by PR #8 as `6712074`. The 68 tests above were run on this code.
+
+Follow-up before C04 (branch `pre-c04-fixes`, after the tag above):
+- `reservations.confirm` no longer writes `EXPIRED` when the hold has passed: it answers `409` and the row stays `DRAFT`, which reads as `EXPIRED` and occupies nothing. This is what the state diagram (`diagrams.md`: "derived, not stored"), C1, G3 and I of `c03-architecture.md` and ADR-003 already said; only the code stored it. Nothing observable changes (C02 mismatch 7: the stored column is not observable).
+- `/auth/login` uses `INSERT OR IGNORE` instead of `ON CONFLICT … DO NOTHING`, so the API also runs on Python builds whose bundled SQLite is older than 3.24. On such a build (Python 3.11.8, SQLite 3.19.3) 51 of the 68 tests failed before, including the walking skeleton.
+- `docs/trace_confirm.py` set `cinema.main.DB_PATH`, which `connect`/`reset_db` no longer read after the refactor (they live in `cinema.db`). Run as documented, it wiped the developer database `cinema.sqlite3` and left one reservation `CONFIRMED` with `DRAFT` seats in it. It now points `cinema.db.DB_PATH` at a throw-away file; its output is the same as in A3 and the developer database is untouched (checked with a marker row).
+- ADR-007's status records that the frontend exists although the ADR deferred it; the CP1 path stays API-only.
+- Verified: 68 passed on SQLite 3.19.3 and on 3.53.1; walking skeleton over HTTP against `uvicorn` on SQLite 3.19.3 (login 200 → `POST /reservations` 201 `DRAFT` → seats occupied → same seats 409 → confirm 200 `CONFIRMED` → notification delivered → cancel 200); confirm after the hold → 409, stored `DRAFT` in both tables, reads `EXPIRED`, seats free.
