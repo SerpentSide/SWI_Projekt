@@ -14,11 +14,13 @@ A reservation system for cinema seats, built for SWI. The reserved resource is a
 | Document | Contains |
 |---|---|
 | [docs/intent-and-change.md](docs/intent-and-change.md) | Project Frame, selected future pressure, the C01 change + review loop |
-| [docs/architecture-and-decisions.md](docs/architecture-and-decisions.md) | Architecture sketch and ADR-001 … ADR-007 |
-| [docs/evidence-and-evolution.md](docs/evidence-and-evolution.md) | C01 engineering spike: question, method, measured result, decision |
+| [docs/architecture-and-decisions.md](docs/architecture-and-decisions.md) | Architecture sketch, ADR-001 … ADR-008, and C03 Part A (AS-IS trace of Confirm Reservation) |
+| [docs/evidence-and-evolution.md](docs/evidence-and-evolution.md) | C01 engineering spike, C02 evidence (specification → running app), C03 architecture evidence |
 | [docs/operations-specification.md](docs/operations-specification.md) | C02: full spec of the four core operations (Create, Check Availability, Confirm, Cancel) plus the shared business rules/invariants (BR-01 .. BR-04) |
 | [docs/c02-review.md](docs/c02-review.md) | C02: the acceptance-gate check for each operation, extracted from the spec so it can be reviewed on its own |
 | [docs/diagrams.md](docs/diagrams.md) | C02: use-case, lifecycle (state) and per-operation activity diagrams, with a table tracing each transition to spec text and a test |
+| [docs/c02-change-impact.md](docs/c02-change-impact.md) | C02: impact analysis of the approval change (v0.1 → v0.2), done before the specification was edited |
+| [docs/c03-architecture.md](docs/c03-architecture.md) | C03: drivers, responsibilities, decision question, alternatives, ADR-008 decision, context / static / runtime / sequence / class views, cross-view check, AS-IS → TO-BE delta |
 | [docs/review.html](docs/review.html) | Team review page — every C01 decision with what it costs. Open it in a browser (double-click, no server needed). Written in Czech for the team. |
 
 ## The domain in one screen
@@ -155,8 +157,10 @@ requirements.txt                     runtime deps (FastAPI)
 requirements-dev.txt                 test deps
 docs/
   intent-and-change.md               Project Frame, future pressure, change + review loop
-  architecture-and-decisions.md      architecture sketch, ADR-001 .. ADR-007
-  evidence-and-evolution.md          C01 spike: question, method, result, decision
+  architecture-and-decisions.md      architecture sketch, ADR-001 .. ADR-008, C03 Part A
+  c02-change-impact.md               C02: impact analysis of the approval change
+  c03-architecture.md                C03: drivers, alternatives, views, AS-IS -> TO-BE delta
+  evidence-and-evolution.md          C01 spike, C02 evidence, C03 evidence
 src/
   cinema/
     schema.sql                       tables + the partial unique index that ADR-004 rests on

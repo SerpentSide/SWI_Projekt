@@ -279,7 +279,7 @@ Only ones with evidence behind them:
 ## Commit
 
 Application, tests and specification for v0.1 and v0.2: see `git log` on branch `c02-evidence`;
-the v0.2 implementation is commit `36b7571`.
+the v0.2 implementation is commit `36b7571` (tag `c02-v0.2`).
 
 
 ---
@@ -332,4 +332,4 @@ Remaining uncertainty / risk:
 - No authorisation: anyone can call `/decision` and `POST /movies`; OP-05's `403` is still not implemented.
 - The `Notification Service` of the Project Frame is, in the implementation, an outbox in our own database plus the browser; a real provider would need a transactional outbox.
 
-Commit/tag: branch `c04`, docs `14a7a5e`, code `2c47953` (evidence added after them).
+Commit/tag: tag `c03-architecture` = commit `817fdd2` (docs `14a7a5e`, code `2c47953`, evidence `817fdd2`); merged to `main` by PR #8 as `6712074`. The 68 tests above were run on this code.
