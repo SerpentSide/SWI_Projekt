@@ -115,7 +115,8 @@ def login(body: LoginIn, db=Depends(get_db)):
     """No passwords yet: an email identifies the user, created on first login."""
     email = body.email.strip().lower()
     with write_tx(db):
-        db.execute("INSERT INTO users (email) VALUES (?) ON CONFLICT (email) DO NOTHING", (email,))
+        # OR IGNORE, not ON CONFLICT ... DO NOTHING: that upsert syntax needs SQLite >= 3.24
+        db.execute("INSERT OR IGNORE INTO users (email) VALUES (?)", (email,))
     user = db.execute("SELECT id, email FROM users WHERE email = ?", (email,)).fetchone()
     return {"user_id": user["id"], "email": user["email"]}
 
