@@ -1,6 +1,6 @@
 # Operations Specification (C02)
 
-**Version: baseline v0.2 (draft — awaiting team approval).** v0.1 is the four-operation
+**Version: Specification Baseline v0.2 — approved by the team (all four members, sign-off in [`diagrams.md`](diagrams.md), confirmed 2026-10-13).** v0.1 is the four-operation
 version at commit `1a7e2e6`; what changed and what did not is in
 [`c02-change-impact.md`](c02-change-impact.md). Passages changed by v0.2 are marked *(v0.2)*.
 
