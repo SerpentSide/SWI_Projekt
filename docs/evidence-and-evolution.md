@@ -211,7 +211,7 @@ Rule applied: decide whether the *spec*, the *example* or the *implementation* i
 | 4 | Spec OP-01 said create's race-safety mechanism "has not been built". It has: create runs inside `BEGIN IMMEDIATE`, the same write lock confirm uses. 15 simultaneous-create rounds gave exactly one 201 every time | spec | see "Correction to OP-01" below |
 | 5 | Repo did not run on Windows: `zoneinfo` has no `Europe/Prague` without the `tzdata` package | environment | `tzdata` added to `requirements.txt` for Windows |
 | 6 | OP-03 step 5 calls `NotificationService`; **no such seam exists in the code** | implementation gap | **open** — see below |
-| 7 | Spec said a rejected confirm on an expired hold must not rewrite the row; code writes `EXPIRED` | spec | the brief requires *observable* requirements; the stored column is not observable (reads give `EXPIRED` either way). Spec reworded, test now checks what is observable |
+| 7 | Spec said a rejected confirm on an expired hold must not rewrite the row; code writes `EXPIRED` | spec | the brief requires *observable* requirements; the stored column is not observable (reads give `EXPIRED` either way). Spec reworded, test now checks what is observable. *Update (PR #11): the code no longer writes it either; the row stays `DRAFT`.* |
 | 8 | Spec said Create takes the viewer's **email**; API takes `user_id` issued by `/auth/login` | spec | the brief only says "Authorized User"; spec now says logged-in `user_id` |
 | 9 | Spec named error codes (`seat_taken`, `orphan_seat`, …) that no code returns | spec | the brief asks for failure *outcomes*, and warns against invented precision; codes removed, status + reason remain |
 | 10 | Spec OP-02 said seats carry `status ∈ {free, occupied}`; API returns an `occupied` boolean | spec | same reasoning; spec now says an `occupied` flag |
@@ -332,3 +332,10 @@ Remaining uncertainty / risk:
 - The `Notification Service` of the Project Frame is, in the implementation, an outbox in our own database plus the browser; a real provider would need a transactional outbox.
 
 Commit/tag: tag `c03-architecture` = commit `817fdd2` (docs `14a7a5e`, code `2c47953`, evidence `817fdd2`); merged to `main` by PR #8 as `6712074`. The 68 tests above were run on this code.
+
+Follow-up before C04 (PR #11, branch `pre-c04-fixes`, after the tag above):
+- `reservations.confirm` no longer writes `EXPIRED` when the hold has passed: it answers `409` and the row stays `DRAFT`, which reads as `EXPIRED` and occupies nothing. This is what the state diagram (`diagrams.md`: "derived, not stored"), C1, G3 and I of `c03-architecture.md` and ADR-003 already said; only the code stored it. Nothing observable changes (C02 mismatch 7: the stored column is not observable).
+- `/auth/login` uses `INSERT OR IGNORE` instead of `ON CONFLICT … DO NOTHING`, so the API also runs on Python builds whose bundled SQLite is older than 3.24. On such a build (Python 3.11.8, SQLite 3.19.3) 51 of the 68 tests failed before, including the walking skeleton.
+- `docs/trace_confirm.py` set `cinema.main.DB_PATH`, which `connect`/`reset_db` no longer read after the refactor (they live in `cinema.db`). Run as documented, it wiped the developer database `cinema.sqlite3` and left one reservation `CONFIRMED` with `DRAFT` seats in it. It now points `cinema.db.DB_PATH` at a throw-away file; its output is the same as in A3 and the developer database is untouched (checked with a marker row).
+- ADR-007's status records that the frontend exists although the ADR deferred it; the CP1 path stays API-only.
+- Verified: 68 passed on SQLite 3.19.3 and on 3.53.1; walking skeleton over HTTP against `uvicorn` on SQLite 3.19.3 (login 200 → `POST /reservations` 201 `DRAFT` → seats occupied → same seats 409 → confirm 200 `CONFIRMED` → notification delivered → cancel 200); confirm after the hold → 409, stored `DRAFT` in both tables, reads `EXPIRED`, seats free.

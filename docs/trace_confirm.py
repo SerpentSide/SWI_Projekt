@@ -10,11 +10,13 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+import cinema.db
 import cinema.main as m
 from cinema.seed import iso
 from fastapi.testclient import TestClient
 
-m.DB_PATH = Path(tempfile.mkdtemp()) / "trace.sqlite3"
+# connect/reset_db read DB_PATH from cinema.db (since the C03 refactor), not from cinema.main
+cinema.db.DB_PATH = Path(tempfile.mkdtemp()) / "trace.sqlite3"
 m.reset_db()
 db = m.connect()
 db.execute("UPDATE seats SET requires_approval = 0")

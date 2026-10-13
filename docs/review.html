@@ -385,7 +385,7 @@ const DECISIONS = [
     cost:"<b>Sedadlo číslo 2 v jinak prázdné řadě nejde nikdy rezervovat</b>, protože osamotí jedničku. Záměr, ale vypadá to jako bug. A rezervace může padnout kvůli cizímu holdu, který za chvíli vyprší." },
   { id:"d8", tag:"ADR-007", h:"V CP1 žádný frontend",
     why:"Walking skeleton je definovaný jako serverová cesta ověřená automatickým testem. Frontend přidá druhý stack a druhou CI cestu, aniž by tu cestu posunul o krok.",
-    cost:"Do té doby existuje mapa sedadel jen jako odpověď <code>check availability</code> a pravidla se ukazují testy, ne obrázkem." },
+    cost:"Do té doby existuje mapa sedadel jen jako odpověď <code>check availability</code> a pravidla se ukazují testy, ne obrázkem. <i>Pozn. z C03: frontend nakonec vznikl i tak (od 15. 9.), cesta CP1 ale zůstává jen přes API. Viz status ADR-007.</i>" },
   { id:"d9", tag:"zadání", h:"Formálně deklarujeme jedno vlastní pravidlo, ne dvě",
     why:"Zadání chce <b>právě jedno</b> vlastní business rule. Orphan rule je tedy to deklarované pravidlo, patnáctiminutový hold je součást stavového modelu. Je to poctivé — hold opravdu <b>je</b> vlastnost životního cyklu, ne byznys pravidlo.",
     cost:"Kdyby cvičící četl hold jako druhé pravidlo, je to rozdíl ve formulaci, ne ve věci. Fakticky máme obojí." }

@@ -381,6 +381,7 @@ persistent entities (tables), and the modules are the "classes" with behaviour.
 | G2 ↔ G4 | Five logical elements in one Python process, the SPA in the browser. The runtime has no element the static view lacks. OK |
 | ADR ↔ G2/G4 | The ADR's "only Reservation Management writes Reservation state" is the single arrow set in G2 and is checked by the test in L2. OK |
 | **Found:** domain model C1 ↔ code | `Notification` is in the domain model, but its only job is delivery. Kept, flagged as belonging to the delivery mechanism. |
+| **Found after C03 (PR #11):** C1 / G3 ↔ code | C1, G3 and the state diagram say `EXPIRED` is derived and never written, but `reservations.confirm` wrote it when it refused an expired hold, so the "EXPIRED is derived. OK" above was not true of the code. **Fixed in the code:** confirm now only answers `409`; the row stays `DRAFT` and reads as `EXPIRED`. |
 
 Open and not decided in C03: authorisation (who may call `decide`); retry of a lost notification (see ADR-008).
 

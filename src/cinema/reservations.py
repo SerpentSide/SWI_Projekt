@@ -172,23 +172,19 @@ def create(db, user_id: int, screening_id: int, seat_ids: list[int], at: str) ->
 
 def confirm(db, reservation_id: int, at: str) -> str:
     """OP-03: DRAFT -> CONFIRMED, or -> PENDING_APPROVAL when a seat needs approval. Returns the new state."""
-    expired = False
-    new_state = "CONFIRMED"
     with _guard_br02():
         with write_tx(db):
             reservation = _reservation(db, reservation_id)
-            if is_expired(reservation, at):
-                _change_state(db, reservation_id, "EXPIRED", at)
-                expired = True
-            elif reservation["state"] != "DRAFT":
+            if is_expired(reservation, at):  # derived, not stored (ADR-003): the row stays DRAFT
+                raise Conflict("Reservation hold has expired")
+            if reservation["state"] != "DRAFT":
                 raise Conflict(f"Cannot confirm a {reservation['state']} reservation")
-            elif needs_approval(db, reservation_id):  # v0.2: wait for a box office decision
+            if needs_approval(db, reservation_id):  # v0.2: wait for a box office decision
                 new_state = "PENDING_APPROVAL"
                 _change_state(db, reservation_id, new_state, at)
             else:
+                new_state = "CONFIRMED"
                 _change_state(db, reservation_id, new_state, at, "confirmed_at")
-    if expired:  # raised after the commit, so the EXPIRED state is kept
-        raise Conflict("Reservation hold has expired")
     return new_state
 
 

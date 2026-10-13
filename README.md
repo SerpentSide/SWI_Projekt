@@ -117,7 +117,8 @@ python3 -m venv .venv
 npm --prefix src/frontend ci && npm --prefix src/frontend run dev   # UI on http://localhost:5173
 ```
 
-Expected test output:
+Expected result: **68 passed** — `test_c02_operations.py` 49, `test_api.py` 7,
+`test_notifications.py` 6, `test_architecture.py` 4, `test_double_booking_spike.py` 2. Among them:
 
 ```
 tests/test_api.py::test_walking_skeleton PASSED
@@ -165,12 +166,20 @@ the backend first.
 README.md                            this file -- domain summary + walking skeleton
 requirements.txt                     runtime deps (FastAPI)
 requirements-dev.txt                 test deps
+pytest.ini                           pytest settings (src on the path)
+start.ps1                            Windows: venv, dependencies, backend and frontend in one command
 docs/
   intent-and-change.md               Project Frame, future pressure, change + review loop
-  architecture-and-decisions.md      architecture sketch, ADR-001 .. ADR-008, C03 Part A
+  operations-specification.md        C02: specification of OP-01 .. OP-05, rules BR-01 .. BR-04
+  c02-review.md                      C02: acceptance-gate check of each operation
+  diagrams.md                        C02: use-case, state and activity diagrams
   c02-change-impact.md               C02: impact analysis of the approval change
+  architecture-and-decisions.md      architecture sketch, ADR-001 .. ADR-008, C03 Part A
   c03-architecture.md                C03: drivers, alternatives, views, AS-IS -> TO-BE delta
   evidence-and-evolution.md          C01 spike, C02 evidence, C03 evidence
+  where-to-find-what.md              navigation map (Czech): decisions, drivers, operations -> docs, code, tests
+  review.html                        C01 team review page (Czech, open in a browser)
+  trace_confirm.py                   C03 Part A runtime trace of the Confirm conflict (throw-away database)
 src/
   cinema/
     schema.sql                       tables + the partial unique index that ADR-004 rests on
@@ -184,6 +193,7 @@ src/
   frontend/                          React + Vite UI (see its own README)
 tests/
   test_double_booking_spike.py       the executed C01 spike
+  test_c02_operations.py             C02 acceptance tests: every operation, v0.2 approval, concurrency
   test_api.py                        walking skeleton + error paths
   test_notifications.py              who gets notified, delivery, failure isolation
   test_architecture.py               C03: only reservations.py writes Reservation state
