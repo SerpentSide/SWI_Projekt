@@ -5,7 +5,7 @@ Each ADR says what we picked, what it costs, and what would make us change our m
 
 ## Architecture at a glance
 
-> **This is the C01 target sketch, not what the code is today.** The AS-IS structure of the Confirm scenario is in "C03 - Part A" at the end of this file.
+> **This is the C01 target sketch, not what the code is today.** The architecture the code follows since C03 (ADR-008) is G2 in [`c03-architecture.md`](c03-architecture.md#g2-to-be-static-architecture); the AS-IS structure of the Confirm scenario before that refactor is in "C03 - Part A" at the end of this file.
 
 ```
           HTTP
@@ -111,6 +111,8 @@ adds a scheduler, a failure mode, and an operational thing to monitor.
 read `DRAFT` while behaving as expired. Every availability query must therefore include the
 `hold_until > now()` predicate, and forgetting it in one query is a plausible bug. We accept
 that and keep the predicate in a single shared query helper rather than repeating it.
+Since PR #11 nothing writes `EXPIRED` at all: Confirm used to store it when it refused an expired
+hold, now the row keeps `DRAFT` (or `PENDING_APPROVAL`) and only reads as `EXPIRED`.
 
 **What would change our mind.** A reporting or analytics need for accurate `EXPIRED`
 timestamps, which lazy evaluation cannot provide.

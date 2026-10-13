@@ -82,7 +82,7 @@ Pomocné endpointy mimo životní cyklus: `/auth/login`, `/movies`, `/screenings
 ## 7. Pohledy C03 (kde je který diagram)
 
 Vše v `docs/c03-architecture.md`: doménový model C1, odpovědnosti C2, otázka D, alternativy E1–E3, rozhodnutí F, kontext G1, statická architektura G2, vlastnictví přechodů G3, runtime G4, sekvence H1, třídy H2, cross-view kontrola I, delta AS-IS → TO-BE J.
-AS-IS stav před refaktoringem: `docs/architecture-and-decisions.md`, Část A (A1–A8), reprodukovatelný trace `docs/trace_confirm.py`.
+AS-IS stav před refaktoringem: `docs/architecture-and-decisions.md`, Část A (A1–A8), reprodukovatelný trace `docs/trace_confirm.py` (běží na dočasné DB, vývojovou nechá být).
 
 ## 8. Ověření a evidence
 
@@ -93,4 +93,5 @@ AS-IS stav před refaktoringem: `docs/architecture-and-decisions.md`, Část A (
 | C01 spike (persistence / dvojí prodej) | `evidence-and-evolution.md` (C01), `tests/test_double_booking_spike.py` |
 | C02: spec → běžící app, nalezené nesoulady | `evidence-and-evolution.md`, "Evidence C02" |
 | C03: ověření, konformita, rizika, commit | `evidence-and-evolution.md`, "C03 — Architecture Evidence" |
+| opravy po C03, před C04 (PR #11: trace skript, login na starší SQLite, confirm nezapisuje `EXPIRED`) | `evidence-and-evolution.md`, "Follow-up before C04" |
 | Tagy: `c02-v0.2` = `36b7571`, `c03-architecture` = `817fdd2` | `git tag` |
