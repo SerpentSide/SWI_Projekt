@@ -14,10 +14,15 @@ from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("Europe/Prague")  # showtimes are local; the DB stores UTC
-DAYS = 14
 CLEANING = timedelta(minutes=20)  # gap between two screenings in one hall
 # Possible showtimes: 10:00 .. 21:30 in 15-minute steps.
 SLOTS = [time(h, m) for h in range(10, 22) for m in (0, 15, 30, 45)]
+
+
+def last_day_of_next_month(today: date) -> date:
+    """Seeded screenings run from today to here, e.g. 2026-10-13 -> 2026-11-30."""
+    first_after = (today.replace(day=1) + timedelta(days=62)).replace(day=1)  # 1st of the month after next
+    return first_after - timedelta(days=1)
 
 
 def iso(dt: datetime) -> str:
@@ -45,10 +50,10 @@ def seed_random(conn: sqlite3.Connection, rng: random.Random | None = None) -> N
         for movie_id, duration in movies
     }
 
-    # 2. Expand it over the next DAYS days and pack each day into halls.
+    # 2. Expand it from today to the end of next month and pack each day into halls.
     screenings = []  # (movie_id, hall_id, starts_at, ends_at)
     today = date.today()
-    for offset in range(DAYS):
+    for offset in range((last_day_of_next_month(today) - today).days + 1):
         day = today + timedelta(days=offset)
         wanted = [
             (datetime.combine(day, t, TZ), movie_id, duration)

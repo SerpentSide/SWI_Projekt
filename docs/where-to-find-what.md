@@ -77,7 +77,7 @@ Pomocné endpointy mimo životní cyklus: `/auth/login`, `/movies`, `/screenings
 | `availability.py` | co je obsazené, no-orphan | jen čte |
 | `db.py` | připojení, `write_tx`, `now`, `reset_db` | infrastruktura |
 | `notifications.py` | `NotificationService` (Protocol), `BrowserNotifications` (outbox v DB), `notify`, `deliver` | volá se z API po commitu |
-| `schema.sql`, `seed.sql`, `seed.py` | schéma a demo data (`seed.py` je jediná deklarovaná výjimka z pravidla vlastnictví) | |
+| `schema.sql`, `seed.sql`, `seed.py` | schéma a demo data; `seed.py` generuje náhodná promítání a obsazená místa od dneška do konce příštího měsíce (`seed.py` je jediná deklarovaná výjimka z pravidla vlastnictví) | |
 
 ## 7. Pohledy C03 (kde je který diagram)
 

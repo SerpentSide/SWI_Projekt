@@ -136,7 +136,8 @@ start or tear down — SQLite is a file, created fresh per test by pytest's `tmp
 
 The API keeps its data in `cinema.sqlite3` in the repository root (override with the
 `CINEMA_DB` environment variable). On first start it creates the schema and loads demo
-data: `seed.sql` plus random screenings and already-reserved seats from `seed.py`. To wipe
+data: `seed.sql` plus random screenings and already-reserved seats from `seed.py`
+(from today to the end of next month, so the window moves with the date of seeding). To wipe
 it and reseed: `PYTHONPATH=src ./.venv/bin/python -m cinema.main` (needed after a schema
 change, e.g. the `notifications` table — the API only creates the schema in an empty file).
 
