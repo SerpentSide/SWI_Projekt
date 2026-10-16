@@ -468,3 +468,424 @@ identity provider because this scenario does not use one.
 | Question | What keeps `reservations` and `reservation_seats` in sync — and what happens when a new endpoint forgets to do it? |
 | Evidence | When the `UPDATE reservation_seats` fails, SQLite still lets `COMMIT` through, so the earlier `UPDATE reservations` would be saved (runtime trace in A3: `COMMIT: reached`). Only the `ROLLBACK` in `write_tx` (M:49-51) prevents that, and every endpoint has to remember to use it. |
 | Why it matters | One endpoint that skips it could leave a reservation `CONFIRMED` with its seats still `DRAFT` — and the unique index does not protect seats in that state (BR-02). |
+
+---
+
+# C05 — Detailed Design
+
+Baseline: **v0.2**. Architecture input: C03 ([`c03-architecture.md`](c03-architecture.md), ADR-008).
+The DD below is design intent written **before** the C05 code changes; section 6 compares it with what
+was then implemented.
+
+## 1. Selected architecture unit
+
+| Item | Value |
+|---|---|
+| Selected architecture unit / responsibility | **Reservation lifecycle** inside the C03 element *Reservation Management* (`src/cinema/reservations.py`): deciding whether a transition of an **existing** Reservation is allowed, choosing its target state, performing it on both tables in one transaction, turning a BR-02 veto of the database into a conflict, and deriving `EXPIRED` without storing it. Covers the commands **confirm, approve, reject, cancel** and the read-side **effective state**. |
+| Boundary — inside | the state machine of a Reservation after it exists (C02 state diagram, C03 G3 "Ownership of transitions" — every row except *(create) → DRAFT*); the transaction around a transition; the BR-02 → `Conflict` decision; the lazy-expiry derivation. |
+| Boundary — outside (used, not designed here) | *Availability* (definition of occupied, no-orphan rule — only `create` uses it); `create` itself (its logic is seat selection, not lifecycle); the *Reservation Store* (`write_tx`, unique index `uq_confirmed_seat_per_screening` — used as given); the *HTTP API* (maps `ReservationError` to status codes); *Notification Integration* (called by the API after the command returned, ADR-008 / D4); authorisation of the operator (not implemented, C03 open risk). |
+| Related requirement(s) | **OP-03** Confirm Reservation incl. the v0.2 approval variant; **OP-04** Cancel Reservation; **OP-05** Approve Reservation (approve / reject) — observable requirements, preconditions, postconditions and failure outcomes in [`operations-specification.md`](operations-specification.md). C03 drivers **D1** (concurrency/BR-02), **D2** (one owner of state and its sync), **D3** (pending approval outlives the request). |
+| Related scenario(s) | S1 confirm on ordinary seats → `CONFIRMED`; S2 confirm with a seat that requires approval → `PENDING_APPROVAL`; S3 confirm/approve loses the BR-02 race → `409`, nothing of the reservation confirmed (C03 H1, C01 spike); S4 confirm after the hold passed → `409`, reads `EXPIRED`; S5 delayed approval → approve or reject before `starts_at`, `EXPIRED` after it; S6 cancel of `DRAFT` / `PENDING_APPROVAL` / `CONFIRMED` before the screening starts; S7 cancel and approve of one pending reservation arriving together (OP-05 verification example). |
+| Relevant business rule(s) | **BR-01** (`now < starts_at` boundary, half-open intervals); **BR-02** exclusive seat — the index is the last line of defence (ADR-004); **BR-03** cancellation policy and terminal states (`CANCELLED`, `EXPIRED`, `REJECTED`); **ADR-003** expiry is derived, never written; **ADR-005** `reservations` and `reservation_seats` change together; **ADR-008** only Reservation Management changes Reservation state. |
+
+**Why this unit.** It is the part of the system with the most real decision logic: seven transitions, each
+with its own guard over three inputs (stored state, `hold_until`, `starts_at`), plus a derived state and a
+concurrency veto from the database. In the current code the guards are written out separately inside
+`confirm`, `cancel` and `decide`, so "which transition is allowed from which state" is not stated anywhere as
+one thing — it has to be reconstructed by reading three functions. That is what this DD makes explicit.
+## 2. Detailed responsibilities
+
+What the Reservation lifecycle must decide or perform internally, before any choice of functions or
+classes. Every lifecycle command (confirm, approve, reject, cancel) passes through R1–R7 in this order;
+the read side (`get`, `list_for_user`) uses only R1.
+
+| # | Detailed responsibility | Why is it needed? |
+|---|---|---|
+| **R1** | **Derive the effective state** of a Reservation at one instant `at`: a `DRAFT` with `hold_until <= at`, or a `PENDING_APPROVAL` whose screening has `starts_at <= at`, *is* `EXPIRED`; otherwise the stored state. | ADR-003: expiry is never written, so it must be computed — and computed the **same way** by every read and every command. OP-03/OP-05 require the 409 reason to name the *current* (lazily derived) state. Today `confirm` names the stored state, so a pending reservation of a started screening is reported as `PENDING_APPROVAL`, not `EXPIRED`. |
+| **R2** | **Decide whether the command is allowed from the effective state**: one table *command × effective state → allowed / refused*. Refusal carries the effective state in its reason. | C02 state diagram and BR-03: `CANCELLED`, `EXPIRED`, `REJECTED` are terminal; confirm only from `DRAFT`, approve/reject only from `PENDING_APPROVAL`, cancel from `DRAFT`/`PENDING_APPROVAL`/`CONFIRMED`. Today these rules are three separate `if`s in three functions; a new state or command (the next change card) would have to be added to each. |
+| **R3** | **Check the screening-start guard** `at < starts_at` (BR-01) for the commands that need it: cancel, approve, reject. | Independent of R1: a `DRAFT` whose 15-minute hold is still running can belong to a screening that has just started — its effective state is `DRAFT`, yet cancel must be refused (BR-03). Kept separate so R1 stays "what state is it" and R3 stays "is it still too late to act". |
+| **R4** | **Choose the target state and its timestamp**: confirm → `PENDING_APPROVAL` if any seat requires approval, else `CONFIRMED` + `confirmed_at`; approve → `CONFIRMED` + `confirmed_at`; reject → `REJECTED`; cancel → `CANCELLED` + `cancelled_at`. | OP-03 (v0.2 variant), OP-04, OP-05 postconditions. The confirm branch depends on data (`seats.requires_approval`), so it is a real decision, not a constant. |
+| **R5** | **Perform the transition atomically on both tables** inside one write transaction, and refuse to run outside one. | ADR-005: `reservations.state` and `reservation_seats.state` must never differ; C03 A3/A8 showed that a failed statement does not abort the SQLite transaction, so only the transaction's `ROLLBACK` keeps them equal. D2: exactly one place writes state (ADR-008). |
+| **R6** | **Turn a BR-02 veto of the database into a conflict**: when `uq_confirmed_seat_per_screening` refuses a transition into `CONFIRMED`, roll the whole transaction back and report `Conflict`. | D1 / BR-02 / ADR-004: two concurrent confirms (or confirm + approve) can both pass R1–R4; only the index decides the loser, and nothing of the losing reservation may stay `CONFIRMED`. One decision point instead of one `except` per command. |
+| **R7** | **Report the outcome without HTTP**: the new state on success, or a typed refusal — `NotFound` (unknown reservation), `Conflict` (R2/R3/R6) — that the HTTP API maps to `404`/`409`. | C03 J: the domain must not raise `HTTPException`; the API is the only element that knows status codes, and the notification request (D4) is made by the API from the returned state. Refusals must leave the reservation unchanged (state diagram: "rejected requests never change state"). |
+
+**Consequence for the next step.** R1, R2, R3 and the decision part of R4 need **no database writes** —
+they are a function of a few facts (stored state, `hold_until`, `starts_at`, "a seat requires approval",
+`at`). R5 and R6 are about the transaction and the store. Step 3 uses this split to decide what can be
+unit-tested without SQLite.
+
+## 3. Design elements, data/state and interfaces
+
+### 3.1 Split
+
+Step 2 showed that R1–R4 are decisions over a handful of facts and R5–R6 are about the transaction. The
+design puts them in two places inside Reservation Management:
+
+- **Lifecycle policy** — new module `src/cinema/lifecycle.py`. *Pure*: no database, no clock, no exceptions
+  for domain outcomes. It answers "given these facts at this instant, may this command run, and what does it
+  change into?".
+- **Command service** — the existing `src/cinema/reservations.py`. Opens the transaction, loads the facts,
+  asks the policy, writes the result, and owns the BR-02 veto. It stays the only module with SQL that writes
+  Reservation state (ADR-008, `tests/test_architecture.py`), because the policy has no SQL at all.
+
+The public functions used by the HTTP API (`confirm`, `cancel`, `decide`, `get`, `list_for_user`) keep their
+signatures, so the API and the C02 acceptance tests are not part of this change.
+
+### 3.2 Design elements and ownership
+
+| Responsibility | Owner (design element) | State / data | Why here? |
+|---|---|---|---|
+| R1 effective state | `lifecycle.effective_state(facts, at)` — function | reads `ReservationFacts`; owns no state | Pure function of stored state, `hold_until`, `starts_at`, `at`. One function used by reads **and** by every command, so they cannot disagree (ADR-003). |
+| R2 allowed from which state | `lifecycle.TRANSITIONS` — table (constant data) + `lifecycle.plan` | `TRANSITIONS: dict[Command, Rule]`, `Rule = (allowed_from, needs_not_started, target)` | The state machine becomes **data** in one place: a new state or command is one new row, readable next to the C02 state diagram. |
+| R3 screening-start guard | `lifecycle.plan`, driven by `Rule.needs_not_started` | same table | It is a property of the command (cancel, approve, reject), so it sits in the same row as the allowed states. |
+| R4 target state + timestamp | `lifecycle.plan` → returns `Transition` | `Transition(target, timestamp_column)` — value object | The only data-dependent branch (confirm + "a seat requires approval") is decided from a fact, not by querying, so it is testable without SQLite. |
+| facts for R1–R4 | `reservations._load_facts(db, reservation_id)` — function | reads `reservations`, `screenings.starts_at`, `seats.requires_approval`; builds `ReservationFacts` (frozen dataclass) | The only place that knows **where** the facts live. Runs inside the write transaction, so the facts the policy judges are the facts that get written over (no read/write gap). |
+| R5 atomic write of both tables | `reservations._change_state` — function (kept from C03) | **owns** `reservations.state`, `confirmed_at` / `cancelled_at`, and `reservation_seats.state` | ADR-005 / ADR-008: exactly one writer; refuses to run outside `write_tx`. |
+| R6 BR-02 veto → conflict | `reservations._guard_br02` — context manager (kept from C03) + `uq_confirmed_seat_per_screening` in the store | none (the index is owned by the Reservation Store) | The database detects; the command service decides "the whole command loses". Wraps the transaction, so the `ROLLBACK` has already happened when `Conflict` leaves. |
+| R7 outcome without HTTP | `reservations.transition(db, id, command, at)` — function; errors `ReservationError` → `NotFound`, `Conflict` | returns the new state as `str` | One command path for all four commands. Turns the policy's `Refused` value into a `Conflict` exception, so the API keeps its single exception handler. |
+
+**Data structures** (all in `lifecycle.py`, immutable):
+
+| Element | Kind | Fields |
+|---|---|---|
+| `Command` | `StrEnum` | `CONFIRM`, `APPROVE`, `REJECT`, `CANCEL` |
+| `ReservationFacts` | frozen dataclass | `stored_state: str`, `hold_until: str`, `starts_at: str`, `needs_approval: bool` |
+| `Rule` | frozen dataclass | `allowed_from: frozenset[str]`, `needs_not_started: bool`, `target: Transition \| None` (fixed result; `None` for confirm, whose target is chosen in `plan`) |
+| `Transition` | frozen dataclass | `target: str`, `timestamp_column: str \| None` (`"confirmed_at"`, `"cancelled_at"` or `None`) |
+| `Refused` | frozen dataclass | `reason: str` |
+
+Times are ISO-8601 UTC strings from `db.now` / `seed.iso`, compared as text — the convention the whole
+application already uses; the policy does not parse them.
+
+**The transition table** (`TRANSITIONS`, the data behind R2–R4):
+
+| Command | Allowed from (effective state) | Screening must not have started | Target | Timestamp |
+|---|---|---|---|---|
+| confirm | `DRAFT` | no — see note | `PENDING_APPROVAL` if `needs_approval`, else `CONFIRMED` | `confirmed_at` only for `CONFIRMED` |
+| approve | `PENDING_APPROVAL` | yes | `CONFIRMED` | `confirmed_at` |
+| reject | `PENDING_APPROVAL` | yes | `REJECTED` | – |
+| cancel | `DRAFT`, `PENDING_APPROVAL`, `CONFIRMED` | yes | `CANCELLED` | `cancelled_at` |
+
+`CANCELLED`, `REJECTED`, `EXPIRED` appear in no "allowed from" cell — that *is* BR-03's "terminal".
+For approve/reject the start guard is redundant with R1 (a pending reservation of a started screening is
+already `EXPIRED`), but it is kept explicit because OP-05 lists it as its own precondition.
+
+*Note — confirm and the screening start.* OP-03's preconditions and the C02 state diagram guard confirm only
+by `hold_until > now`; BR-03's "Applies to" line says OP-03 shares the `now < starts_at` boundary. A `DRAFT`
+created just before the start can therefore still be confirmed up to 15 minutes after it. The DD follows the
+more specific sources (OP-03, state diagram) and keeps today's behaviour; switching is a one-cell change of
+this table. Recorded as a remaining design risk for the C05 evidence.
+
+### 3.3 Key interface / contract
+
+**`<<interface>> LifecyclePolicy`** — realised by module `lifecycle.py`
+
+```
+effective_state(facts: ReservationFacts, at: str) : str
+plan(command: Command, facts: ReservationFacts, at: str) : Transition | Refused
+```
+
+Contract of `plan`:
+
+```
+Preconditions:
+- facts.stored_state is a stored state: DRAFT, PENDING_APPROVAL, CONFIRMED, CANCELLED, REJECTED
+- facts.hold_until, facts.starts_at and at are ISO-8601 UTC strings in the same format
+- facts describe the reservation as read inside the transaction that will apply the result
+
+Postconditions:
+- pure and deterministic: same input -> same output; nothing is read or written
+- Transition: effective_state(facts, at) is in TRANSITIONS[command].allowed_from,
+  and if needs_not_started then at < facts.starts_at;
+  target and timestamp_column are those of the table row
+- Refused: otherwise; nothing else may happen
+- a Transition never has target EXPIRED (expiry is derived, ADR-003)
+
+Failures (as values, not exceptions):
+- Refused("Cannot <command> a <EFFECTIVE_STATE> reservation")   -- state not allowed; names the effective state (OP-03/05)
+- Refused("The screening has already started")                   -- start guard (BR-01, BR-03)
+Precedence: the state check first, then the start guard.
+```
+
+**Command service `reservations.transition`** — the contract the HTTP API relies on:
+
+```
+transition(db, reservation_id: int, command: Command, at: str) : str   -- the new stored state
+
+Preconditions:
+- db is a connection from db.connect() and is NOT inside a transaction (the function opens its own)
+
+Postconditions (success):
+- reservations.state and every reservation_seats.state of this reservation = returned state
+- confirmed_at / cancelled_at = at when the row of TRANSITIONS names it
+- committed
+
+Failures (exceptions, nothing written, transaction rolled back):
+- NotFound   -- unknown reservation_id                              -> API 404
+- Conflict   -- the policy refused (reason passed through)          -> API 409
+- Conflict   -- uq_confirmed_seat_per_screening vetoed CONFIRMED    -> API 409 (BR-02)
+```
+
+`confirm`, `cancel` and `decide` become one-line wrappers around `transition`.
+
+### 3.4 Focused structural view
+
+```mermaid
+classDiagram
+    direction LR
+    class ReservationManagement {
+        <<module reservations.py>>
+        confirm(db, id, at) str
+        cancel(db, id, at) str
+        decide(db, id, decision, at) str
+        get(db, id, at) dict
+        transition(db, id, command, at) str
+        -_load_facts(db, id) ReservationFacts
+        -_change_state(db, id, Transition, at)
+        -_guard_br02()
+    }
+    class LifecyclePolicy {
+        <<interface>>
+        effective_state(facts, at) str
+        plan(command, facts, at) Transition or Refused
+    }
+    class lifecycle {
+        <<module lifecycle.py>>
+        TRANSITIONS : Command to Rule
+    }
+    class ReservationFacts {
+        <<value object>>
+        stored_state
+        hold_until
+        starts_at
+        needs_approval
+    }
+    class Transition {
+        <<value object>>
+        target
+        timestamp_column
+    }
+    class Refused {
+        <<value object>>
+        reason
+    }
+    class ReservationError {
+        detail
+    }
+    class ReservationStore {
+        <<module db.py + SQLite>>
+        write_tx(db)
+        reservations.state
+        reservation_seats.state
+        uq_confirmed_seat_per_screening
+    }
+
+    lifecycle ..|> LifecyclePolicy
+    ReservationManagement ..> LifecyclePolicy : asks plan / effective_state
+    ReservationManagement ..> ReservationFacts : builds
+    LifecyclePolicy ..> ReservationFacts : reads
+    LifecyclePolicy ..> Transition : returns
+    LifecyclePolicy ..> Refused : returns
+    ReservationManagement ..> ReservationError : raises NotFound, Conflict
+    ReservationManagement --> ReservationStore : owns state rows, writes in write_tx
+```
+
+How to read it:
+
+- **Dependency direction:** `reservations.py` → `lifecycle.py`, never back. The policy knows neither the
+  database, nor the clock (`at` is passed in), nor the errors; so R1–R4 are unit-testable with plain values.
+- **State ownership:** only `ReservationManagement` touches `reservations.state` / `reservation_seats.state`
+  (the solid arrow); the policy only *returns* what the state should become.
+- **Veto:** the unique index sits in the store; `ReservationManagement._guard_br02` is the one place that
+  translates it.
+- Not drawn: Availability (used by `create` only, outside the boundary), the HTTP API and Notification
+  Integration (callers of / called after `ReservationManagement`, unchanged from C03 G2).
+
+## 4. Methods, algorithms and dynamic behaviour
+
+### 4.1 Significant operations
+
+Getters, the one-line wrappers (`confirm`, `cancel`, `decide`) and `get` / `list_for_user` (they only call
+`effective_state`) are not documented here.
+
+**`lifecycle.effective_state`**
+
+```
+Operation:        effective_state(facts: ReservationFacts, at: str) -> str
+Responsibility:   R1
+Input:            the stored facts of one reservation; the instant of the request
+Output:           one of DRAFT, PENDING_APPROVAL, CONFIRMED, CANCELLED, REJECTED, EXPIRED
+Preconditions:    as plan (3.3)
+Postconditions:   EXPIRED iff (DRAFT and hold_until <= at) or (PENDING_APPROVAL and starts_at <= at);
+                  otherwise facts.stored_state, unchanged
+Side effects:     none
+Failure behavior: none (total over valid input)
+```
+
+**`lifecycle.plan`** — contract in 3.3, algorithm in 4.2.
+
+```
+Operation:        plan(command: Command, facts: ReservationFacts, at: str) -> Transition | Refused
+Responsibility:   R2, R3, R4
+Input:            the command; the facts; the instant
+Output:           Transition(target, timestamp_column) or Refused(reason)
+Side effects:     none
+Failure behavior: domain refusals are returned as Refused; never raises for valid input
+```
+
+**`reservations.transition`** — the one command path
+
+```
+Operation:        transition(db, reservation_id: int, command: Command, at: str) -> str
+Responsibility:   R5, R6, R7 (and orchestration of R1-R4 inside one transaction)
+Input:            an autocommit connection; the reservation id; the command; the instant
+Output:           the new stored state
+Preconditions:    db not in a transaction
+Postconditions:   both tables carry the returned state; timestamps set as the Transition says; committed
+Side effects:     BEGIN IMMEDIATE (takes SQLite's single write lock), UPDATE of 2 tables, COMMIT
+Failure behavior: NotFound / Conflict raised AFTER the ROLLBACK; the reservation is exactly as before
+```
+
+**`reservations._load_facts`**
+
+```
+Operation:        _load_facts(db, reservation_id: int) -> ReservationFacts
+Responsibility:   gather the facts R1-R4 need, where they are stored
+Input:            a connection inside write_tx; the reservation id
+Output:           ReservationFacts(stored_state, hold_until, starts_at, needs_approval)
+Preconditions:    called inside write_tx (so the facts cannot change before the write)
+Postconditions:   starts_at is the reservation's screening; needs_approval = any of its seats has requires_approval = 1
+Side effects:     3 SELECTs (reservation, screening, approval seats)
+Failure behavior: NotFound("Reservation not found") if the id does not exist
+```
+
+**`reservations._change_state`** (kept from C03, signature now takes the `Transition`)
+
+```
+Operation:        _change_state(db, reservation_id: int, transition: Transition, at: str) -> None
+Responsibility:   R5
+Input:            connection; id; the planned Transition; the instant for the timestamp column
+Preconditions:    db.in_transaction is true; transition.target != EXPIRED
+Postconditions:   reservations.state = reservation_seats.state = target (all seat rows);
+                  <timestamp_column> = at when not None
+Side effects:     UPDATE reservations, UPDATE reservation_seats
+Failure behavior: RuntimeError if not in a transaction (programming error, fails tests loudly);
+                  sqlite3.IntegrityError from the seats UPDATE when the target is CONFIRMED and a seat
+                  is already CONFIRMED elsewhere -- propagated, handled by _guard_br02 (R6)
+```
+
+**`reservations._guard_br02`** (kept from C03)
+
+```
+Operation:        with _guard_br02(): with write_tx(db): ...
+Responsibility:   R6
+Postconditions:   sqlite3.IntegrityError leaving the block becomes Conflict("One of the seats was just
+                  confirmed by someone else"); anything else passes through unchanged
+Side effects:     none of its own; it is placed OUTSIDE write_tx, so write_tx has already rolled back
+Failure behavior: n/a (it is the failure translation)
+```
+
+### 4.2 Algorithm / decision logic
+
+`effective_state` and `plan` in pseudocode (`TRANSITIONS` is the table in 3.2):
+
+```
+effective_state(facts, at):
+    if facts.stored_state == DRAFT and facts.hold_until <= at:            # 15-minute hold passed
+        return EXPIRED
+    if facts.stored_state == PENDING_APPROVAL and facts.starts_at <= at:  # approval came too late
+        return EXPIRED
+    return facts.stored_state
+
+plan(command, facts, at):
+    rule  = TRANSITIONS[command]
+    state = effective_state(facts, at)
+    if state not in rule.allowed_from:                                   # R2 (terminal states included)
+        return Refused("Cannot " + command + " a " + state + " reservation")
+    if rule.needs_not_started and facts.starts_at <= at:                 # R3, BR-01: allowed only while at < starts_at
+        return Refused("The screening has already started")
+    if command == CONFIRM:                                               # R4, the one data-dependent branch
+        if facts.needs_approval:
+            return Transition(PENDING_APPROVAL, None)
+        return Transition(CONFIRMED, "confirmed_at")
+    return rule.target                                                   # fixed target of approve/reject/cancel
+```
+
+The same as a decision table — every combination a test can pick from (`started` = `starts_at <= at`,
+`held` = `hold_until > at`):
+
+| # | Command | Stored state | held | started | needs_approval | Result |
+|---|---|---|---|---|---|---|
+| 1 | confirm | DRAFT | yes | – | no | → `CONFIRMED`, `confirmed_at` |
+| 2 | confirm | DRAFT | yes | – | yes | → `PENDING_APPROVAL` |
+| 3 | confirm | DRAFT | no | – | – | Refused "…a EXPIRED reservation" |
+| 4 | confirm | PENDING_APPROVAL | – | no | – | Refused "…a PENDING_APPROVAL reservation" |
+| 5 | confirm | PENDING_APPROVAL | – | yes | – | Refused "…a EXPIRED reservation" *(today: names PENDING_APPROVAL)* |
+| 6 | confirm | CONFIRMED / CANCELLED / REJECTED | – | – | – | Refused, names the stored state |
+| 7 | approve | PENDING_APPROVAL | – | no | – | → `CONFIRMED`, `confirmed_at` |
+| 8 | reject | PENDING_APPROVAL | – | no | – | → `REJECTED` |
+| 9 | approve / reject | PENDING_APPROVAL | – | yes | – | Refused "…a EXPIRED reservation" |
+| 10 | approve / reject | anything else | – | – | – | Refused, names the effective state |
+| 11 | cancel | DRAFT (held) / PENDING_APPROVAL / CONFIRMED | – | no | – | → `CANCELLED`, `cancelled_at` |
+| 12 | cancel | DRAFT | yes | yes | – | Refused "The screening has already started" |
+| 13 | cancel | CONFIRMED | – | yes | – | Refused "The screening has already started" |
+| 14 | cancel | DRAFT | no | – | – | Refused "…a EXPIRED reservation" |
+| 15 | cancel | CANCELLED / REJECTED | – | – | – | Refused, names the stored state |
+
+Row 12 is the case that justifies R3 being separate from R1. Rows 5 and 9 are where the DD deliberately
+differs from today's code (today: "Cannot confirm a PENDING_APPROVAL reservation" and "The screening has
+started, the approval has expired"); both still answer `409`, only the reason changes so it names the
+derived state, as OP-03/OP-05 say.
+
+### 4.3 Detailed sequence — approve loses the BR-02 race
+
+C03 level (H1): `HTTP API → Reservation Management → Reservation Store`.
+C05 DD level: `transition → _guard_br02 → write_tx → _load_facts → lifecycle.plan → _change_state → SQLite`.
+
+Scenario S3 with the approval variant: R1 is `PENDING_APPROVAL` on seat X; meanwhile another reservation has
+been `CONFIRMED` on seat X (C03 E3 complication).
+
+```mermaid
+sequenceDiagram
+    participant API as HTTP API (main.py)
+    participant RM as reservations.transition
+    participant G as _guard_br02
+    participant TX as db.write_tx
+    participant LF as _load_facts
+    participant P as lifecycle.plan
+    participant CS as _change_state
+    participant DB as SQLite
+
+    API->>RM: decide(db, R1, "approve", at) -> transition(db, R1, APPROVE, at)
+    RM->>G: enter
+    G->>TX: enter
+    TX->>DB: BEGIN IMMEDIATE (single write lock)
+    RM->>LF: _load_facts(db, R1)
+    LF->>DB: SELECT reservation, screening.starts_at, approval seats
+    LF-->>RM: ReservationFacts(PENDING_APPROVAL, hold_until, starts_at, true)
+    RM->>P: plan(APPROVE, facts, at)
+    P->>P: effective_state = PENDING_APPROVAL, allowed, at < starts_at
+    P-->>RM: Transition(CONFIRMED, "confirmed_at")
+    RM->>CS: _change_state(db, R1, transition, at)
+    CS->>DB: UPDATE reservations SET state = CONFIRMED, confirmed_at = at
+    CS->>DB: UPDATE reservation_seats SET state = CONFIRMED
+    DB-->>CS: IntegrityError (uq_confirmed_seat_per_screening)
+    CS-->>TX: IntegrityError propagates
+    TX->>DB: ROLLBACK (both UPDATEs undone)
+    TX-->>G: IntegrityError propagates
+    G-->>RM: raise Conflict("One of the seats was just confirmed by someone else")
+    RM-->>API: Conflict
+    API-->>API: map to 409, no notification requested
+```
+
+The two other endings of the same path:
+
+- `plan` returns `Refused(reason)` → `transition` raises `Conflict(reason)` inside `write_tx` → `ROLLBACK`
+  (nothing was written) → `409`.
+- no veto → `write_tx` commits → `transition` returns `CONFIRMED` → the API requests
+  `reservation_approved` from Notification Integration (unchanged C03 behaviour, D4).
+
+The order of the two context managers is a design decision, not a detail: `_guard_br02` is **outside**
+`write_tx`, so by the time a `Conflict` exists the rollback has already run, and the caller can never
+observe — or commit — the half-written state that C03 A3 showed is possible.
+
