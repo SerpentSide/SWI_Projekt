@@ -117,8 +117,8 @@ python3 -m venv .venv
 npm --prefix src/frontend ci && npm --prefix src/frontend run dev   # UI on http://localhost:5173
 ```
 
-Expected result: **68 passed** — `test_c02_operations.py` 49, `test_api.py` 7,
-`test_notifications.py` 6, `test_architecture.py` 4, `test_double_booking_spike.py` 2. Among them:
+Expected result: **80 passed** — `test_c02_operations.py` 49, `test_api.py` 7, `test_lifecycle.py` 7,
+`test_notifications.py` 6, `test_c05_transition.py` 5, `test_architecture.py` 4, `test_double_booking_spike.py` 2. Among them:
 
 ```
 tests/test_api.py::test_walking_skeleton PASSED

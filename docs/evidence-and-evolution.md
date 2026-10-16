@@ -339,3 +339,120 @@ Follow-up before C04 (PR #11, branch `pre-c04-fixes`, after the tag above):
 - `docs/trace_confirm.py` set `cinema.main.DB_PATH`, which `connect`/`reset_db` no longer read after the refactor (they live in `cinema.db`). Run as documented, it wiped the developer database `cinema.sqlite3` and left one reservation `CONFIRMED` with `DRAFT` seats in it. It now points `cinema.db.DB_PATH` at a throw-away file; its output is the same as in A3 and the developer database is untouched (checked with a marker row).
 - ADR-007's status records that the frontend exists although the ADR deferred it; the CP1 path stays API-only.
 - Verified: 68 passed on SQLite 3.19.3 and on 3.53.1; walking skeleton over HTTP against `uvicorn` on SQLite 3.19.3 (login 200 → `POST /reservations` 201 `DRAFT` → seats occupied → same seats 409 → confirm 200 `CONFIRMED` → notification delivered → cancel 200); confirm after the hold → 409, stored `DRAFT` in both tables, reads `EXPIRED`, seats free.
+
+---
+
+## C05 DD Verification Evidence
+
+Detailed Design: [`architecture-and-decisions.md`](architecture-and-decisions.md), "C05 — Detailed Design"
+(unit: Reservation lifecycle). References below: R1–R7 = detailed responsibilities (section 2), the contract
+of `plan` / `transition` (3.3), decision-table rows #1–#15 (4.2), sequence (4.3).
+
+### Tests derived from DD
+
+Written from the DD **before** the implementation (`lifecycle.py` did not exist yet). Two files, two levels:
+
+- `tests/test_lifecycle.py` — **unit**: the lifecycle policy alone, plain values, no database, no clock.
+- `tests/test_c05_transition.py` — **component**: Reservation Management (`reservations.transition` and its
+  wrappers) against a real throw-away SQLite file, no HTTP. Every test passes a fixed `at`, so no test depends on
+  the wall clock.
+
+| # | DD element / decision | What must hold? | Test level | Test case |
+|---|---|---|---|---|
+| U1 | interface contract of `plan` (3.3); `TRANSITIONS` = C02 state diagram | For every command × stored state × hold running/passed × screening started/not × needs approval: `plan` returns a value and never raises; it returns a `Transition` exactly for the edges of the C02 state diagram, otherwise `Refused`; a `Transition` never has target `EXPIRED`. | unit | `test_plan_allows_exactly_the_edges_of_the_state_diagram` (exhaustive, 4 × 5 × 2 × 2 × 2 = 160 combinations, oracle = the edges of `diagrams.md` §2 written out in the test) |
+| U2 | algorithm branch R4 — confirm + "a seat requires approval" (rows #1, #2) | `needs_approval` → `PENDING_APPROVAL` without timestamp; otherwise `CONFIRMED` with `confirmed_at`. | unit | `test_confirm_chooses_pending_approval_only_when_a_seat_needs_it` |
+| U3 | R1 effective state, BR-01 boundaries | `hold_until == at` → `EXPIRED`, one second earlier → `DRAFT`; pending with `starts_at == at` → `EXPIRED`, one second earlier → `PENDING_APPROVAL`; terminal and `CONFIRMED` states pass through unchanged. | unit | `test_effective_state_boundaries_are_half_open` |
+| U4 | R3 is separate from R1 (row #12) | A `DRAFT` with a running hold whose screening has started: effective state is still `DRAFT`, but cancel is `Refused("The screening has already started")`. | unit | `test_cancel_of_a_live_draft_after_the_start_is_refused_by_the_start_guard` |
+| U5 | failure behaviour — reason names the **effective** state (rows #5, #9; precedence 3.3) | confirm / approve / reject on a pending reservation of a started screening → `Refused("Cannot <command> a EXPIRED reservation")`. | unit | `test_refusal_names_the_derived_state` |
+| C1 | state transition through R5 (both tables, timestamp, commit) | approve of a `PENDING_APPROVAL` → returns `CONFIRMED`; `reservations.state` and **all** `reservation_seats.state` are `CONFIRMED`, `confirmed_at = at`; visible from a second connection (committed). | component | `test_approve_writes_both_tables_and_commits` |
+| C2 | collaboration plan → `_change_state` → unique index → `_guard_br02` (sequence 4.3, R6) | approve on a seat already `CONFIRMED` by another reservation → `Conflict`; this reservation and all its seats are still `PENDING_APPROVAL`, `confirmed_at` is NULL; the connection is not left in a transaction. | component | `test_approve_that_loses_br02_changes_nothing` |
+| C3 | failure behaviour — a refusal writes nothing (R7, contract of `transition`) | cancel of a `CANCELLED` reservation → `Conflict` naming `CANCELLED`; stored state, seats and `cancelled_at` unchanged; no open transaction. | component | `test_refused_command_leaves_the_reservation_untouched` |
+| C4 | R1 used by the commands, not only by reads (row #5) | `reservations.confirm` on a pending reservation of a started screening → `Conflict("Cannot confirm a EXPIRED reservation")`; stored state stays `PENDING_APPROVAL` (expiry not written, ADR-003). | component | `test_confirm_of_an_expired_pending_reservation_names_expired` |
+| C5 | precondition — unknown reservation (`_load_facts`) | unknown id → `NotFound`, no open transaction. | component | `test_unknown_reservation_is_not_found` |
+
+**Selected level and why — three of the tests:**
+
+*U2 — confirm chooses `PENDING_APPROVAL` only when a seat needs it*
+- Selected level: unit.
+- Why this level: the decision depends only on one fact (`needs_approval`). With the DD split (3.1) the fact is an
+  input of `plan`, so the branch can be tested with two plain values instead of preparing VIP seats in a database
+  and going through HTTP as the C02 test does.
+- What design decision does this test verify? That the v0.2 variant is a **branch of the policy** (R4) chosen from a
+  fact loaded by the command service, not a query hidden inside the decision — i.e. the purity of `plan`.
+
+*U4 — cancel of a live draft after the start*
+- Selected level: unit.
+- Why this level: the case needs `hold_until > at >= starts_at`, which is awkward to reach through the API (create
+  refuses a started screening) but trivial as a `ReservationFacts` value.
+- What design decision does this test verify? That R3 (start guard) is a **separate rule** from R1 (effective
+  state): merging them into "expired" would make this `DRAFT` read as expired for every other purpose too.
+
+*C2 — approve that loses BR-02 changes nothing*
+- Selected level: component (real SQLite, no HTTP).
+- Why this level: the outcome is produced by the collaboration of four parts — `plan`, `_change_state`, the unique
+  index in the store and `_guard_br02` around `write_tx` — and the veto only exists in a real database. A mock of
+  the database would assert our assumption instead of testing it (C03 A3 showed the real behaviour differs from
+  the obvious one: `COMMIT` is reached after the failed statement). HTTP adds nothing to this decision.
+- What design decision does this test verify? R6 and the **order of the context managers** (4.3): the rollback runs
+  before the `Conflict` exists, so nothing of the losing reservation is ever committed.
+
+Not repeated here: HTTP status codes (404/409) and concurrency of two real requests are already covered by the C02
+acceptance tests (`test_c02_operations.py`) and the C01 spike; they run unchanged as the regression suite.
+
+**Run before the implementation** (branch `c05-detailed-design`, 2026-10-16, `python -m pytest -q`): both new
+files fail at collection with `ModuleNotFoundError: No module named 'cinema.lifecycle'` — the tests are red because
+the designed unit does not exist yet, not because of a test mistake. The existing suite without them: 68 passed.
+
+### Unit/component tests executed
+
+After the implementation (`src/cinema/lifecycle.py` new, `src/cinema/reservations.py` refactored), 2026-10-16,
+Python 3.14, `python -m pytest -q`:
+
+| Run | Result |
+|---|---|
+| `tests/test_lifecycle.py` (U1–U5, U5 ×3 commands) | 7 passed |
+| `tests/test_c05_transition.py` (C1–C5) | 5 passed — incl. C4, which fails against the pre-C05 code (its reason named `PENDING_APPROVAL`) |
+| whole suite (C01 spike, C02 acceptance, C03 architecture, notifications, C05) | **80 passed** (68 before + 12 new) |
+| `docs/trace_confirm.py` (C03 Part A trace) | same output as in A3: second confirm `409`, loser `DRAFT` in both tables |
+| HTTP smoke (TestClient): confirm / cancel of a `DRAFT` past its hold | `409 {"detail": "Cannot confirm a EXPIRED reservation"}`, `409 {"detail": "Cannot cancel a EXPIRED reservation"}` |
+
+### Design ↔ implementation mismatch
+
+| DD decision | Implemented? | Evidence | Action |
+|---|---|---|---|
+| 3.1 pure lifecycle policy in its own module; no DB, no clock, refusals as values | YES | `src/cinema/lifecycle.py` imports only `dataclasses`, `enum`; U1–U5 run without a database | keep |
+| 3.2 `TRANSITIONS` table = state diagram, terminal states in no row | YES | `lifecycle.TRANSITIONS`; U1 compares all 160 combinations with the diagram's edges | keep |
+| 3.2 confirm is **not** start-guarded (follows OP-03 over BR-03's "Applies to") | YES | `Rule(frozenset({"DRAFT"}), False, None)`; U1 (`started` does not matter for confirm) | keep — recorded as a design risk below |
+| 3.3 contract of `plan`: precedence state check → start guard; reasons name the effective state | YES | `lifecycle.plan`; U4, U5 | keep |
+| 3.3 contract of `transition`: one command path; `confirm` / `cancel` / `decide` are one-line wrappers; signatures unchanged | YES | `reservations.transition`; API (`main.py`) not changed; C02 acceptance tests pass unchanged | keep |
+| 3.2 / 4.1 `_load_facts` reads the facts **inside** `write_tx` | YES | `transition` calls `lifecycle.plan(command, _load_facts(...), at)` inside `with write_tx(db)` | keep |
+| 4.1 `_change_state` takes the `Transition`, refuses outside a transaction | YES | `reservations._change_state(db, id, transition, at)`; `test_a_state_change_outside_a_transaction_is_refused` (call updated to the new signature — the only change to an existing test) | keep |
+| 4.3 `_guard_br02` outside `write_tx`: rollback before `Conflict` | YES | `transition`; C2 (both tables still `PENDING_APPROVAL`, no open transaction) | keep |
+| 4.1 "`get` / `list_for_user` only call `effective_state`" — i.e. reads need only R1's facts | PARTLY | reads build the same `ReservationFacts` as commands (`_facts`), so they also run the `needs_approval` query, which R1 does not use: one extra `SELECT` per reservation in `list_for_user` | keep the code — one helper instead of two fact builders; cost is one indexed query per row of one user's list. DD unchanged; noted here |
+| 4.2 rows #3, #14: refusal of an expired `DRAFT` names `EXPIRED` | YES, **observable change** | before: `"Reservation hold has expired"` / `"Only active reservations can be cancelled"`; now: `"Cannot confirm a EXPIRED reservation"` / `"Cannot cancel a EXPIRED reservation"`; still `409` | keep — OP-03 asks the reason to name the current state; the frontend shows `detail` verbatim (`api.ts:72`), see risks |
+| ADR-008 / C03 L2: only `reservations.py` writes Reservation state | YES | `lifecycle.py` has no SQL; `test_only_reservation_management_changes_reservation_state` passes | keep |
+
+### Resolution
+
+No design decision had to be reversed. The implementation follows the DD; the one partial match (reads load a
+fact they do not need) was decided in favour of the code and recorded instead of changing the diagram after
+the fact. Two places where the **code** was changed to follow the DD, not the other way round:
+
+- the 409 reasons now name the derived state (decision-table rows #5, #9; before C05 a pending reservation of a
+  started screening was reported as `PENDING_APPROVAL` by confirm and as "the approval has expired" by decide);
+- the guards that were spread over `confirm`, `cancel` and `decide` are now one table; `is_expired` (used only
+  by those guards) was removed.
+
+### Remaining design risk
+
+- **Confirm after the screening start.** A `DRAFT` created just before `starts_at` can be confirmed up to 15
+  minutes after it (OP-03 and the state diagram allow it, BR-03's "Applies to" line suggests not). Needs a product
+  decision; the change would be one cell of `TRANSITIONS` plus U1's oracle.
+- **User-facing wording.** The frontend shows the API's `detail` text, so a viewer now reads
+  "Cannot confirm a EXPIRED reservation" instead of "Reservation hold has expired". Correct by the spec, less
+  friendly; a later change could map refusal reasons to UI texts in the frontend.
+- **The policy trusts its facts.** `plan` is only as correct as `_load_facts`; that function is covered by the
+  component tests C1–C5, not by unit tests. A new fact (e.g. a role for OP-05's `403`) must be added in both.
+- **Authorisation of `decide`** remains open (C03); in this design it would be a new fact and a new refusal in
+  `plan`, not a new place.
+
