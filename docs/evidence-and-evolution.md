@@ -456,3 +456,9 @@ the fact. Two places where the **code** was changed to follow the DD, not the ot
 - **Authorisation of `decide`** remains open (C03); in this design it would be a new fact and a new refusal in
   `plan`, not a new place.
 
+
+### Commit/tag
+
+Branch `c05-detailed-design` (from `main` at `bb52a6e`). DD, implementation, tests and the evidence above:
+commit `f0fb6e1`. Tag `c05-dd` = the commit that adds this section. The 80 tests above were run on
+this code.
