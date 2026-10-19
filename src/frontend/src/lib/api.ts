@@ -37,6 +37,7 @@ export interface Seat {
 
 export interface CreatedReservation {
   reservation_id: number
+  state: 'DRAFT'
   hold_until: string
 }
 

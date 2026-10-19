@@ -86,7 +86,7 @@ POST /reservations
   → persist           INSERT reservation (state = DRAFT, hold_until = now + 15 min)
                       + one reservation_seats row per seat, in one transaction,
                       guarded by uq_confirmed_seat_per_screening
-  → return            201 Created  { "reservation_id": 42, "hold_until": "..." }
+  → return            201 Created  { "reservation_id": 42, "state": "DRAFT", "hold_until": "..." }
   → automated check   pytest: POST returns 201 with an id
                              → GET /reservations/42 reports DRAFT
                              → GET /screenings/1/availability shows those seats occupied

@@ -367,7 +367,7 @@ keeps the two tables consistent. Also covered by
 | Specification | Implementation | Evidence |
 |---|---|---|
 | OP-03 step 4: the unique index "is checked at commit" | Checked when the `UPDATE reservation_seats` statement executes; `COMMIT` is not where it fails | runtime trace above; matches C01 evidence item 4 ("fails … before it can commit") |
-| OP-03 step 5: after commit, `NotificationService.reservation_confirmed` is called | *(was absent at `a3e7a8e`; implemented in `fed5106`)* the call exists, in its own transaction, errors swallowed. The `PENDING_APPROVAL` variant also notifies, which v0.2 leaves unspecified | `confirm_reservation` in `main.py`; `test_failed_notification_never_fails_the_reservation` |
+| OP-03 step 5: after commit, `NotificationService.reservation_confirmed` is called | *(was absent at `a3e7a8e`; implemented in `fed5106`)* the call exists, in its own transaction, errors swallowed. The `PENDING_APPROVAL` variant also notifies, which v0.2 left unspecified *(spec since updated: OP-03 Variant step 5)* | `confirm_reservation` in `main.py`; `test_failed_notification_never_fails_the_reservation` |
 | *(C01 sketch, not v0.2)* "Architecture at a glance" above shows an API layer, a domain layer, a persistence layer and a stubbed `NotificationService` | One module. HTTP handling, business rules and SQL sit in the same functions (`confirm_reservation` receives, decides and maps the error) | M:1 ("deliberately one module, plain SQL, no ORM"), M:338-359 |
 | *(C01, not v0.2)* ADR-007 "No frontend in CP1" | A React frontend exists and calls this endpoint | `src/frontend/src/lib/api.ts:80` |
 

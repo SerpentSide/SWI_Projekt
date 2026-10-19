@@ -1,5 +1,12 @@
 # C02 Review — Requirement Acceptance Gate
 
+> **Status: historical — as of the C02 checkpoint.** This review records what was believed at
+> C02 and is not kept in step with the code. Two items have since been resolved: create's
+> race-safety *is* built (create runs inside `BEGIN IMMEDIATE`; see "Correction to OP-01" in
+> [`evidence-and-evolution.md`](evidence-and-evolution.md)), and notifications for a pending
+> reservation, an approval and a rejection are now specified (OP-03 Variant, OP-05). The
+> current statement of each lives in [`operations-specification.md`](operations-specification.md).
+
 The C02 brief asks that the acceptance gate (meaning, need/rationale, observable, feasible,
 verifiable, state/time, concurrency, consistency, unknown) be applied to every requirement.
 This document is that check, one table per operation, kept separate from

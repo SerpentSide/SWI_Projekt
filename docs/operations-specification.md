@@ -45,7 +45,7 @@ theirs while they decide, without another viewer taking them in the meantime.
 user" is out of scope of this baseline.
 
 **Observable requirement(s):** the response is either `201 Created` carrying the new
-reservation's `id`, `state` (`DRAFT`), and `hold_until`, or one of the documented failure
+reservation's `reservation_id`, `state` (`DRAFT`), and `hold_until`, or one of the documented failure
 codes below — never a silent partial success.
 
 **Preconditions:**
@@ -67,7 +67,7 @@ exclusivity guarantee (BR-02) — at most one viewer may hold a seat as a live `
 `CONFIRMED` at any moment (`intent-and-change.md`); no-orphan rule (BR-04, ADR-006); the
 screening-not-started boundary (BR-01, `intent-and-change.md` Core operations table).
 Create now carries the same class of race-safety requirement confirm has under ADR-004 —
-see the Concurrency row in [`c02-review.md`](c02-review.md).
+see the Assumption below for how it is met.
 
 ### Main success scenario
 1. Viewer picks a screening and 1..N seats, submits the request.
@@ -107,25 +107,22 @@ see the Concurrency row in [`c02-review.md`](c02-review.md).
   too.
 
 ### Assumption / unknown / TBD
-- **Update (C02 evidence):** the claim below that the mechanism is "not yet built" is out of date. The
-  API runs create inside `BEGIN IMMEDIATE`, and 15 simultaneous-create rounds yielded exactly one `201`
-  each time (`tests/test_c02_operations.py`). What is still true: the guarantee is SQLite's single write
-  lock, not a constraint covering live `DRAFT` holds. See "Correction to OP-01" in
-  `evidence-and-evolution.md`.
-- **The policy is settled; the mechanism is not yet built.** The Project Frame now states
-  plainly that at most one viewer may hold a seat as a live `DRAFT` or as `CONFIRMED` at
-  any moment, so create() is required to be race-safe the same way confirm() already is
-  (ADR-004) — this is no longer an open product question. What remains open is the
-  *implementation*: unlike confirm(), create()'s race-safety has not been built or spiked
-  yet. A `SELECT`-then-insert check alone is known to be insufficient, for the same reason
-  it was insufficient for confirm (`evidence-and-evolution.md`), but there is no equivalent
-  of `uq_confirmed_seat_per_screening` covering live `DRAFT` holds today, and building one is
-  less direct than it was for `CONFIRMED`: a static unique index over `state = 'DRAFT'` rows
-  would keep blocking a seat forever after its holder's hold expires, since expiry is lazy
-  (ADR-003) and nothing rewrites the row to `EXPIRED` on its own. Closing this gap needs
-  either an opportunistic expiry step folded into `create`'s own transaction or a different
-  mechanism entirely — a design question, not a specification question, and out of scope for
-  this document. It is now a required piece of C03's work, not merely a candidate one.
+- **The policy is settled, and the mechanism is built — as write-lock serialisation, not a
+  constraint.** The Project Frame states plainly that at most one viewer may hold a seat as a
+  live `DRAFT` or as `CONFIRMED` at any moment, so create() must be race-safe the same way
+  confirm() is (ADR-004). The API meets this by running create's whole check-then-insert
+  inside `BEGIN IMMEDIATE` (`write_tx` in `db.py`), the same SQLite write lock confirm uses;
+  15 simultaneous-create rounds yielded exactly one `201` each time
+  (`tests/test_c02_operations.py`; "Correction to OP-01" in `evidence-and-evolution.md`).
+  The nuance worth keeping: this guarantee is SQLite's single-writer lock, **not** a
+  declarative constraint. There is no equivalent of `uq_confirmed_seat_per_screening`
+  covering live `DRAFT` holds, so a writer that bypassed `write_tx` could still create two
+  holds on one seat. Such a constraint is less direct than it was for `CONFIRMED`: a static
+  unique index over `state = 'DRAFT'` rows would keep blocking a seat forever after its
+  holder's hold expires, since expiry is lazy (ADR-003) and nothing rewrites the row to
+  `EXPIRED` on its own. Moving to a database with concurrent writers would need either an
+  opportunistic expiry step inside create's transaction or a different mechanism — a design
+  question, not a specification one.
 
 ---
 
@@ -240,13 +237,15 @@ Steps 1–2 are as above. Then:
 3. System sees that at least one of the reservation's seats requires approval.
 4. Instead of `CONFIRMED`, system writes `PENDING_APPROVAL` to the reservation and to every
    one of its `reservation_seats` rows, in the same transaction. `confirmed_at` stays empty.
-5. System returns `200` with state `PENDING_APPROVAL`. The seats remain occupied; nothing
+5. On commit, system calls `NotificationService.reservation_pending_approval(reservation)`
+   (the viewer is told the reservation is saved and waits for approval) and ignores its outcome.
+6. System returns `200` with state `PENDING_APPROVAL`. The seats remain occupied; nothing
    else can take them while the decision is pending.
 
 `uq_confirmed_seat_per_screening` does not fire here (it covers `CONFIRMED` only); the seats'
 exclusivity while pending comes from the Definition of Occupied and from create's exclusivity.
-Whether anyone is notified that a decision is now needed is **not specified** — see the
-Assumption below.
+The viewer is notified (step 5); whether the box office is told that a decision is now needed
+is **not specified** — see the Assumption below.
 
 ### Alternative / failure outcomes
 - Unknown `reservation_id` → `404`.
@@ -274,10 +273,10 @@ Assumption below.
   `CONFIRMED` (atomicity check).
 
 ### Assumption / unknown / TBD
-- *(v0.2)* **Who is told that a reservation is waiting for a decision.** Neither the box
-  office nor the viewer is specified to be notified when a reservation enters
-  `PENDING_APPROVAL`. The Project Frame's `NotificationService` has no call for it. Left
-  undecided on purpose; without it an operator has to look, not be told.
+- *(v0.2)* **Who is told that a reservation is waiting for a decision.** The viewer is
+  notified (`NotificationService.reservation_pending_approval`, Variant step 5). The box office
+  is not: there is no operator role to address (see OP-05), so an operator has to look, not be
+  told. Left undecided on purpose.
 - **Confirming an already-`CONFIRMED` reservation.** Not stated anywhere in C01. We chose
   `409` (confirm is not idempotent in this baseline) over silently returning
   `200` again, because a caller receiving `200` twice for two different physical clicks
@@ -391,8 +390,10 @@ is terminal); ADR-005 (reservation and seat rows change together, in one transac
    `CONFIRMED` to every one of its seat rows, in the same transaction; the unique index is
    checked at commit, exactly as in Confirm.
    `reject`: system writes `REJECTED` to the reservation and to every one of its seat rows.
-4. On commit of an approval, system calls
-   `NotificationService.reservation_confirmed(reservation)` and ignores its outcome.
+4. On commit, system calls `NotificationService.reservation_approved(reservation)` for an
+   approval or `NotificationService.reservation_rejected(reservation)` for a rejection, and
+   ignores its outcome. Approval is a distinct event from OP-03's `reservation_confirmed`, so the
+   viewer can tell "confirmed straight away" from "approved after waiting".
 5. System returns `200` with the new state.
 
 ### Alternative / failure outcomes
@@ -434,8 +435,7 @@ invented.
   roles at all — anyone can act as any user. This slice specifies the observable outcome
   (`403`) but not the mechanism; it is the first thing C03 must decide.
 - **Deciding twice** is `409`, not idempotent — the same reasoning as double-confirm in OP-03.
-- **Whether the viewer is told of a rejection.** Not specified (see OP-03's notification
-  assumption).
+- **Whether the viewer is told of a rejection.** Yes — `reservation_rejected`, step 4.
 
 ---
 
@@ -472,8 +472,9 @@ not used.
 
 Enforced by: `uq_confirmed_seat_per_screening` (ADR-004), proven race-safe by the C01 spike
 (`evidence-and-evolution.md`). The Project Frame extends the same exclusivity to live
-`DRAFT` holds, not only `CONFIRMED` reservations (policy settled; the database mechanism for
-the `DRAFT` side is not yet built — see OP-01's Assumption/TBD).
+`DRAFT` holds, not only `CONFIRMED` reservations (policy settled; on the `DRAFT` side it is
+enforced by create's `BEGIN IMMEDIATE` write lock rather than by a constraint — see OP-01's
+Assumption/TBD).
 
 *(v0.2)* The index covers `CONFIRMED` only. A `PENDING_APPROVAL` reservation is kept
 exclusive by the Definition of Occupied (create refuses occupied seats), not by a constraint.

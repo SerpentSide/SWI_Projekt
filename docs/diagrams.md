@@ -23,8 +23,9 @@ The Project Frame also lets a box-office operator "look up a reservation"; that 
 the baseline operations and is deliberately left out until it has an OP slice.
 
 `NotificationService` is drawn because it really exists (Project Frame, external boundary),
-and only where the spec makes the call: after a reservation becomes `CONFIRMED`, by Confirm
-or by Approve.
+and only where the spec makes the call: after Confirm (`reservation_confirmed`, or
+`reservation_pending_approval` for a VIP seat) and after Approve (`reservation_approved` /
+`reservation_rejected`).
 
 ```mermaid
 flowchart LR
@@ -56,9 +57,9 @@ flowchart LR
 |---|---|---|
 | Create Reservation | Viewer | OP-01 |
 | Check Availability | Viewer, Box office operator | OP-02 |
-| Confirm Reservation | Viewer (+ NotificationService is called when it ends `CONFIRMED`) | OP-03 |
+| Confirm Reservation | Viewer (+ NotificationService is called when it ends `CONFIRMED` or `PENDING_APPROVAL`) | OP-03 |
 | Cancel Reservation | Viewer, Box office operator (BR-03) | OP-04 |
-| Approve Reservation *(v0.2)* | Box office operator (+ NotificationService on approval) | OP-05 |
+| Approve Reservation *(v0.2)* | Box office operator (+ NotificationService on approval or rejection) | OP-05 |
 
 ## 2. Reservation lifecycle — state diagram
 
@@ -151,7 +152,8 @@ flowchart TD
     hold -- yes --> ap{does any seat<br/>require approval?}
     ap -- yes --> pend[UPDATE reservation AND all its seats<br/>to PENDING_APPROVAL]
     pend --> commitp[COMMIT]
-    commitp --> okp([200 PENDING_APPROVAL])
+    commitp --> notifyp[NotificationService.reservation_pending_approval<br/>outcome ignored]
+    notifyp --> okp([200 PENDING_APPROVAL])
     ap -- no --> upd[UPDATE reservation AND all its seats to CONFIRMED]
     upd --> uq{uq_confirmed_seat_per_screening<br/>violated?}
     uq -- yes --> rb[ROLLBACK - no seat confirmed]
@@ -193,13 +195,15 @@ flowchart TD
     t -- no --> e409b[/409 approval expired/]
     t -- yes --> which{decision}
     which -- reject --> rej[UPDATE reservation AND all its seats to REJECTED]
-    rej --> okr([200 REJECTED, seats free again])
+    rej --> commitr[COMMIT]
+    commitr --> notifyr[NotificationService.reservation_rejected<br/>outcome ignored]
+    notifyr --> okr([200 REJECTED, seats free again])
     which -- approve --> upd[UPDATE reservation AND all its seats to CONFIRMED]
     upd --> uq{uq_confirmed_seat_per_screening<br/>violated?}
     uq -- yes --> rb[ROLLBACK - nothing confirmed]
     rb --> e409c[/409 seat taken/]
     uq -- no --> commit[COMMIT]
-    commit --> notify[NotificationService.reservation_confirmed<br/>outcome ignored]
+    commit --> notify[NotificationService.reservation_approved<br/>outcome ignored]
     notify --> oka([200 CONFIRMED])
 ```
 

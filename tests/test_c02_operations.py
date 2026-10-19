@@ -133,6 +133,7 @@ class TestCreate:
         seats = row_seats()[:2]
         resp = create(client, user, screening, seats)
         assert resp.status_code == 201
+        assert resp.json()["state"] == "DRAFT"
         hold_until = datetime.fromisoformat(resp.json()["hold_until"].replace("Z", "+00:00"))
         assert timedelta(minutes=14) < hold_until - datetime.now(UTC) <= timedelta(minutes=15)
         assert stored(resp.json()["reservation_id"]) == ("DRAFT", ["DRAFT", "DRAFT"])
