@@ -154,7 +154,7 @@ the backend first.
 | `POST /reservations` `{user_id, screening_id, seat_ids}` | 201 DRAFT hold · 404 · 409 taken · 422 orphan seat |
 | `GET /reservations/{id}` | reservation with its seats |
 | `GET /users/{id}/reservations` | a user's reservations |
-| `POST /reservations/{id}/confirm` | DRAFT → CONFIRMED (409 if expired or seat taken) |
+| `POST /reservations/{id}/confirm` | DRAFT → CONFIRMED, or DRAFT → PENDING_APPROVAL if a seat needs approval (409 if expired or seat taken) |
 | `POST /reservations/{id}/cancel` | → CANCELLED (until the screening starts) |
 | `POST /reservations/{id}/decision` `{decision: approve\|reject}` | box office: PENDING_APPROVAL → CONFIRMED / REJECTED |
 | `POST /movies` `{title, duration_minutes, …}` | add a movie; notifies every user |

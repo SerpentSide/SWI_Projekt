@@ -435,7 +435,6 @@ invented.
   roles at all — anyone can act as any user. This slice specifies the observable outcome
   (`403`) but not the mechanism; it is the first thing C03 must decide.
 - **Deciding twice** is `409`, not idempotent — the same reasoning as double-confirm in OP-03.
-- **Whether the viewer is told of a rejection.** Yes — `reservation_rejected`, step 4.
 
 ---
 
