@@ -14,9 +14,9 @@ A reservation system for cinema seats, built for SWI. The reserved resource is a
 | Document | Contains |
 |---|---|
 | [docs/intent-and-change.md](docs/intent-and-change.md) | Project Frame, selected future pressure, the C01 change + review loop |
-| [docs/architecture-and-decisions.md](docs/architecture-and-decisions.md) | Architecture sketch, ADR-001 … ADR-008, and C03 Part A (AS-IS trace of Confirm Reservation) |
-| [docs/evidence-and-evolution.md](docs/evidence-and-evolution.md) | C01 engineering spike, C02 evidence (specification → running app), C03 architecture evidence |
-| [docs/operations-specification.md](docs/operations-specification.md) | C02: full spec of the four core operations (Create, Check Availability, Confirm, Cancel) plus the shared business rules/invariants (BR-01 .. BR-04) |
+| [docs/architecture-and-decisions.md](docs/architecture-and-decisions.md) | Architecture sketch, ADR-001 … ADR-008, C03 Part A (AS-IS trace of Confirm Reservation) and the C05 Detailed Design of the Reservation lifecycle |
+| [docs/evidence-and-evolution.md](docs/evidence-and-evolution.md) | C01 engineering spike, C02 evidence (specification → running app), C03 architecture evidence, C05 DD verification evidence |
+| [docs/operations-specification.md](docs/operations-specification.md) | C02: full spec of the four core operations (Create, Check Availability, Confirm, Cancel), the v0.2 Approve operation, and the shared business rules/invariants (BR-01 .. BR-04) |
 | [docs/c02-review.md](docs/c02-review.md) | C02: the acceptance-gate check for each operation, extracted from the spec so it can be reviewed on its own |
 | [docs/diagrams.md](docs/diagrams.md) | C02: use-case, lifecycle (state) and per-operation activity diagrams, with a table tracing each transition to spec text and a test |
 | [docs/c02-change-impact.md](docs/c02-change-impact.md) | C02: impact analysis of the approval change (v0.1 → v0.2), done before the specification was edited |
@@ -77,15 +77,15 @@ A failed notification never fails a confirmed reservation.
 
 ## CP1 walking skeleton
 
-One end-to-end path. **Defined now, runnable after C03 / before C04.**
+One end-to-end path, defined for CP1. **It runs today** — `tests/test_api.py::test_walking_skeleton`.
 
 ```
 POST /reservations
   → validate          screening exists; seats belong to that screening's hall;
                       seats are not occupied; no-orphan rule holds
   → persist           INSERT reservation (state = DRAFT, hold_until = now + 15 min)
-                      + one reservation_seats row per seat, in one transaction,
-                      guarded by uq_confirmed_seat_per_screening
+                      + one reservation_seats row per seat, in one BEGIN IMMEDIATE
+                      transaction (concurrent creates are serialised by SQLite's write lock)
   → return            201 Created  { "reservation_id": 42, "state": "DRAFT", "hold_until": "..." }
   → automated check   pytest: POST returns 201 with an id
                              → GET /reservations/42 reports DRAFT
@@ -93,8 +93,9 @@ POST /reservations
 ```
 
 Error responses on this path: `404` unknown screening or seat, `409` a seat is already
-taken (including the `UniqueViolation` race of ADR-004), `422` the no-orphan rule rejects
-the selection.
+taken (also the loser of two simultaneous creates), `422` the no-orphan rule rejects
+the selection. The `uq_confirmed_seat_per_screening` index (ADR-004) guards the later step,
+confirm, where the `UniqueViolation` race lives.
 
 ## Running what exists today
 
@@ -150,6 +151,7 @@ the backend first.
 | `POST /auth/login` `{email}` | returns `user_id` (user created on first login, no password yet) |
 | `GET /movies` | all movies |
 | `GET /screenings?movie_id=&date=` | screenings, optionally filtered |
+| `GET /screenings/{id}` | one screening |
 | `GET /screenings/{id}/availability` | every seat of the hall with `occupied` |
 | `POST /reservations` `{user_id, screening_id, seat_ids}` | 201 DRAFT hold · 404 · 409 taken · 422 orphan seat |
 | `GET /reservations/{id}` | reservation with its seats |
@@ -159,6 +161,7 @@ the backend first.
 | `POST /reservations/{id}/decision` `{decision: approve\|reject}` | box office: PENDING_APPROVAL → CONFIRMED / REJECTED |
 | `POST /movies` `{title, duration_minutes, …}` | add a movie; notifies every user |
 | `POST /users/{id}/notifications/deliver` | the browser's poll: undelivered notifications, marked delivered |
+| `GET /health` | liveness check |
 
 ## Repository layout
 
@@ -187,6 +190,7 @@ src/
     seed.py                          random screenings + already-reserved seats
     main.py                          the FastAPI app: routes, validation, error -> status code (HTTP layer)
     reservations.py                  Reservation Management: the only code that changes Reservation state (ADR-008)
+    lifecycle.py                     C05: pure lifecycle policy -- allowed transitions, derived EXPIRED
     availability.py                  definition of "occupied", no-orphan rule
     db.py                            connection, write transaction, schema + seed loading
     notifications.py                 NotificationService interface + browser implementation, notify()
@@ -197,4 +201,6 @@ tests/
   test_api.py                        walking skeleton + error paths
   test_notifications.py              who gets notified, delivery, failure isolation
   test_architecture.py               C03: only reservations.py writes Reservation state
+  test_lifecycle.py                  C05: unit tests of the lifecycle policy
+  test_c05_transition.py             C05: transition path, atomicity and BR-02 conflict
 ```

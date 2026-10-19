@@ -210,7 +210,7 @@ Rule applied: decide whether the *spec*, the *example* or the *implementation* i
 | 3 | Cancel checked "screening started" only for `CONFIRMED`; a `DRAFT` could be cancelled after start (spec BR-03 says both) | implementation | fixed → 409 |
 | 4 | Spec OP-01 said create's race-safety mechanism "has not been built". It has: create runs inside `BEGIN IMMEDIATE`, the same write lock confirm uses. 15 simultaneous-create rounds gave exactly one 201 every time | spec | see "Correction to OP-01" below |
 | 5 | Repo did not run on Windows: `zoneinfo` has no `Europe/Prague` without the `tzdata` package | environment | `tzdata` added to `requirements.txt` for Windows |
-| 6 | OP-03 step 5 calls `NotificationService`; **no such seam exists in the code** | implementation gap | **open** — see below |
+| 6 | OP-03 step 5 calls `NotificationService`; **no such seam exists in the code** | implementation gap | **open** at C02 — see below. *Update: implemented in `fed5106` (C03), see C03 Part A.* |
 | 7 | Spec said a rejected confirm on an expired hold must not rewrite the row; code writes `EXPIRED` | spec | the brief requires *observable* requirements; the stored column is not observable (reads give `EXPIRED` either way). Spec reworded, test now checks what is observable. *Update (PR #11): the code no longer writes it either; the row stays `DRAFT`.* |
 | 8 | Spec said Create takes the viewer's **email**; API takes `user_id` issued by `/auth/login` | spec | the brief only says "Authorized User"; spec now says logged-in `user_id` |
 | 9 | Spec named error codes (`seat_taken`, `orphan_seat`, …) that no code returns | spec | the brief asks for failure *outcomes*, and warns against invented precision; codes removed, status + reason remain |
@@ -233,7 +233,8 @@ proven for the current stack and remains a C03 concern in a different form (see 
    protection and not be any).
 2. **NotificationService** (mismatch 6): not implemented, not even as a stub, although OP-03 step 5 and
    OP-05 call it. Also unspecified: who is told that a reservation is waiting for a decision, or was
-   rejected.
+   rejected. *Update: implemented in `fed5106` (C03); the spec now names the pending-approval,
+   approval and rejection notifications (OP-03 Variant, OP-05). Notifying the box office stays open.*
 3. Double-confirm, double-cancel and deciding twice are non-idempotent (`409`) — decided in the spec,
    implemented and tested; still a product question, unchanged.
 4. **Authorisation in Create.** The brief's reference Create rejects an unauthorised user; ours only
