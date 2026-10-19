@@ -17,6 +17,7 @@ import pytest
 
 import cinema.db
 from cinema import reservations
+from cinema.lifecycle import Transition
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "cinema"
 OWNER = "reservations.py"
@@ -67,7 +68,7 @@ def test_a_state_change_outside_a_transaction_is_refused(tmp_path, monkeypatch):
     try:
         rid = db.execute("SELECT id FROM reservations LIMIT 1").fetchone()["id"]
         with pytest.raises(RuntimeError, match="write_tx"):
-            reservations._change_state(db, rid, "CANCELLED", "2026-01-01T00:00:00Z")
+            reservations._change_state(db, rid, Transition("CANCELLED", "cancelled_at"), "2026-01-01T00:00:00Z")
         assert db.execute("SELECT state FROM reservations WHERE id = ?", (rid,)).fetchone()["state"] == "CONFIRMED"
     finally:
         db.close()

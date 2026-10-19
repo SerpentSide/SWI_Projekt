@@ -73,7 +73,8 @@ Pomocné endpointy mimo životní cyklus: `/auth/login`, `/movies`, `/screenings
 | Soubor | Role | Smí |
 |---|---|---|
 | `main.py` | pouze HTTP: routy, mapování `ReservationError` → status kód | nesmí zapisovat stav rezervace |
-| `reservations.py` | **Reservation Management**: create / confirm / cancel / decide, BR-02 guard | jediný zapisuje `reservations` a `reservation_seats` |
+| `reservations.py` | **Reservation Management**: create, `transition` (confirm / cancel / decide), BR-02 guard | jediný zapisuje `reservations` a `reservation_seats` |
+| `lifecycle.py` | **C05** lifecycle policy: tabulka `TRANSITIONS`, `effective_state`, `plan` (čistá, bez DB) | jen rozhoduje, nic nezapisuje |
 | `availability.py` | co je obsazené, no-orphan | jen čte |
 | `db.py` | připojení, `write_tx`, `now`, `reset_db` | infrastruktura |
 | `notifications.py` | `NotificationService` (Protocol), `BrowserNotifications` (outbox v DB), `notify`, `deliver` | volá se z API po commitu |
@@ -88,10 +89,12 @@ AS-IS stav před refaktoringem: `docs/architecture-and-decisions.md`, Část A (
 
 | Co | Kde |
 |---|---|
-| celý test suite (68 testů) | `python -m pytest -q` |
+| celý test suite (80 testů) | `python -m pytest -q` |
 | architektonické pravidlo (jen `reservations.py` zapisuje stav) | `tests/test_architecture.py` |
 | C01 spike (persistence / dvojí prodej) | `evidence-and-evolution.md` (C01), `tests/test_double_booking_spike.py` |
 | C02: spec → běžící app, nalezené nesoulady | `evidence-and-evolution.md`, "Evidence C02" |
 | C03: ověření, konformita, rizika, commit | `evidence-and-evolution.md`, "C03 — Architecture Evidence" |
+| C05: Detailed Design (jednotka Reservation lifecycle) | `architecture-and-decisions.md`, "C05 — Detailed Design" |
+| C05: testy odvozené z DD, nesoulady návrh ↔ kód, rizika | `evidence-and-evolution.md`, "C05 DD Verification Evidence"; `tests/test_lifecycle.py`, `tests/test_c05_transition.py` |
 | opravy po C03, před C04 (PR #11: trace skript, login na starší SQLite, confirm nezapisuje `EXPIRED`) | `evidence-and-evolution.md`, "Follow-up before C04" |
 | Tagy: `c02-v0.2` = `36b7571`, `c03-architecture` = `817fdd2` | `git tag` |
