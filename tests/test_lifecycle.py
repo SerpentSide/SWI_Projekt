@@ -1,7 +1,8 @@
 """C05 unit tests: the lifecycle policy (src/cinema/lifecycle.py) alone - plain values, no database, no clock.
 
 Derived from the Detailed Design in docs/architecture-and-decisions.md ("C05 - Detailed Design"); the ids
-U1-U5 are those of the table in docs/evidence-and-evolution.md ("C05 DD Verification Evidence").
+U1-U5 are those of the table in docs/evidence-and-evolution.md ("C05 DD Verification Evidence"); U6 was
+added with spec v0.3 ("Change after C05: Confirm is start-guarded (v0.3)" in the same file).
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ def diagram_edge(command, state, held, started, needs_approval) -> Transition | 
     """The C02 state diagram (docs/diagrams.md section 2), written out independently of TRANSITIONS."""
     draft_alive = state == "DRAFT" and held
     pending_alive = state == "PENDING_APPROVAL" and not started
-    if command == Command.CONFIRM and draft_alive:
+    if command == Command.CONFIRM and draft_alive and not started:
         return Transition("PENDING_APPROVAL", None) if needs_approval else Transition("CONFIRMED", "confirmed_at")
     if command == Command.APPROVE and pending_alive:
         return Transition("CONFIRMED", "confirmed_at")
@@ -87,3 +88,10 @@ def test_cancel_of_a_live_draft_after_the_start_is_refused_by_the_start_guard():
 def test_refusal_names_the_derived_state(command):
     expired_pending = facts("PENDING_APPROVAL", started=True)
     assert plan(command, expired_pending, AT) == Refused(f"Cannot {command} a EXPIRED reservation")
+
+
+# U6 - R3 also guards confirm (decision-table row 16, spec v0.3)
+def test_confirm_of_a_live_draft_after_the_start_is_refused_by_the_start_guard():
+    live_draft_started = facts("DRAFT", held=True, started=True, needs_approval=True)
+    assert effective_state(live_draft_started, AT) == "DRAFT"
+    assert plan(Command.CONFIRM, live_draft_started, AT) == Refused("The screening has already started")

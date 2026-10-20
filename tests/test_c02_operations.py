@@ -142,6 +142,10 @@ class TestCreate:
         user, screening = login(client), make_screening(-timedelta(minutes=1))
         assert create(client, user, screening, row_seats()[:2]).status_code == 409
 
+    def test_unknown_viewer_is_404(self, client):
+        screening = make_screening(timedelta(hours=3))
+        assert create(client, 999_999, screening, row_seats()[:2]).status_code == 404
+
     def test_duplicate_seat_ids_are_422(self, client):
         user, screening = login(client), make_screening(timedelta(hours=3))
         seat = row_seats()[0]
@@ -306,6 +310,19 @@ class TestConfirm:
             )
             assert sorted(codes) == [200, 409], f"attempt {attempt}: {codes}"
 
+    def test_live_draft_at_the_start_instant_is_409(self, client, monkeypatch):
+        """Spec v0.3 OP-03: the hold is still running, but the screening starts now (BR-01: now < starts_at)."""
+        user, screening = login(client), make_screening(timedelta(minutes=5))
+        rid = plant(screening, user, row_seats()[:2])  # hold_until = now + 15 min, after the start
+        conn = connect()
+        starts_at = conn.execute("SELECT starts_at FROM screenings WHERE id = ?", (screening,)).fetchone()["starts_at"]
+        conn.close()
+        monkeypatch.setattr(cinema.main, "now", lambda: starts_at)
+        resp = client.post(f"/reservations/{rid}/confirm")
+        assert resp.status_code == 409
+        assert resp.json()["detail"] == "The screening has already started"
+        assert stored(rid) == ("DRAFT", ["DRAFT", "DRAFT"])
+
 
 # --- OP-04 Cancel Reservation --------------------------------------------------
 
@@ -352,6 +369,28 @@ class TestCancel:
         rid = plant(screening, user, row_seats()[:2])
         assert client.post(f"/reservations/{rid}/cancel").status_code == 409
         assert stored(rid)[0] == "DRAFT"
+
+    def test_cancel_at_the_exact_start_instant_is_409(self, client, monkeypatch):
+        """BR-01: allowed only while now < starts_at, so now == starts_at is already too late."""
+        user, screening = login(client), make_screening(timedelta(hours=3))
+        rid = plant(screening, user, row_seats()[:2], state="CONFIRMED")
+        conn = connect()
+        starts_at = conn.execute("SELECT starts_at FROM screenings WHERE id = ?", (screening,)).fetchone()["starts_at"]
+        conn.close()
+        monkeypatch.setattr(cinema.main, "now", lambda: starts_at)
+        assert client.post(f"/reservations/{rid}/cancel").status_code == 409
+        assert stored(rid)[0] == "CONFIRMED"
+
+    def test_response_carries_cancelled_at(self, client):
+        """Spec OP-04 observable requirement: the reservation's id, new state CANCELLED, and cancelled_at."""
+        user, screening = login(client), make_screening(timedelta(hours=3))
+        rid = create(client, user, screening, row_seats()[:2]).json()["reservation_id"]
+        body = client.post(f"/reservations/{rid}/cancel").json()
+        conn = connect()
+        cancelled_at = conn.execute("SELECT cancelled_at FROM reservations WHERE id = ?", (rid,)).fetchone()["cancelled_at"]
+        conn.close()
+        assert cancelled_at is not None
+        assert body == {"reservation_id": rid, "state": "CANCELLED", "cancelled_at": cancelled_at}
 
 
 # --- v0.2: seats that require approval (OP-03 variant, OP-05, OP-04, OP-02) ----------
@@ -417,6 +456,18 @@ class TestConfirmNeedingApproval:
         rid, screening, seats = pending(client)
         other = login(client, "other@example.com")
         assert create(client, other, screening, seats).status_code == 409
+
+    def test_vip_confirm_after_start_is_409_and_sends_no_notification(self, client):
+        """Spec v0.3 OP-03: before v0.3 this answered 200 PENDING_APPROVAL for seats that were no longer occupied."""
+        user, screening = login(client), make_screening(-timedelta(minutes=1))
+        seats = row_seats()[:2]
+        require_approval(seats)
+        rid = plant(screening, user, seats)  # hold still running
+        assert client.post(f"/reservations/{rid}/confirm").status_code == 409
+        assert stored(rid) == ("DRAFT", ["DRAFT", "DRAFT"])
+        conn = connect()
+        assert conn.execute("SELECT count(*) AS n FROM notifications WHERE user_id = ?", (user,)).fetchone()["n"] == 0
+        conn.close()
 
     def test_pending_reservation_of_a_started_screening_reads_as_expired_and_is_free(self, client):
         user, screening = login(client), make_screening(-timedelta(minutes=1))

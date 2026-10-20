@@ -48,9 +48,9 @@ class Rule:
 
 
 # The state machine of docs/diagrams.md section 2, as data. CANCELLED, REJECTED and EXPIRED are in no
-# `allowed_from`: that is what "terminal" (BR-03) means. Confirm is not start-guarded (OP-03; see DD 3.2).
+# `allowed_from`: that is what "terminal" (BR-03) means. Every command is start-guarded (spec v0.3; DD 3.2).
 TRANSITIONS: dict[Command, Rule] = {
-    Command.CONFIRM: Rule(frozenset({"DRAFT"}), False, None),
+    Command.CONFIRM: Rule(frozenset({"DRAFT"}), True, None),
     Command.APPROVE: Rule(frozenset({"PENDING_APPROVAL"}), True, Transition("CONFIRMED", "confirmed_at")),
     Command.REJECT: Rule(frozenset({"PENDING_APPROVAL"}), True, Transition("REJECTED", None)),
     Command.CANCEL: Rule(
