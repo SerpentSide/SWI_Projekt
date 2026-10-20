@@ -15,8 +15,8 @@ A reservation system for cinema seats, built for SWI. The reserved resource is a
 |---|---|
 | [docs/intent-and-change.md](docs/intent-and-change.md) | Project Frame, selected future pressure, the C01 change + review loop |
 | [docs/architecture-and-decisions.md](docs/architecture-and-decisions.md) | Architecture sketch, ADR-001 … ADR-008, C03 Part A (AS-IS trace of Confirm Reservation) and the C05 Detailed Design of the Reservation lifecycle |
-| [docs/evidence-and-evolution.md](docs/evidence-and-evolution.md) | C01 engineering spike, C02 evidence (specification → running app), C03 architecture evidence, C05 DD verification evidence |
-| [docs/operations-specification.md](docs/operations-specification.md) | C02: full spec of the four core operations (Create, Check Availability, Confirm, Cancel), the v0.2 Approve operation, and the shared business rules/invariants (BR-01 .. BR-04) |
+| [docs/evidence-and-evolution.md](docs/evidence-and-evolution.md) | C01 engineering spike, C02 evidence (specification → running app), C03 architecture evidence, why there is no C04 artifact, C05 DD verification evidence, the v0.3 change after C05 |
+| [docs/operations-specification.md](docs/operations-specification.md) | C02: full spec of the four core operations (Create, Check Availability, Confirm, Cancel), the v0.2 Approve operation, and the shared business rules/invariants (BR-01 .. BR-04); baseline v0.3 |
 | [docs/c02-review.md](docs/c02-review.md) | C02: the acceptance-gate check for each operation, extracted from the spec so it can be reviewed on its own |
 | [docs/diagrams.md](docs/diagrams.md) | C02: use-case, lifecycle (state) and per-operation activity diagrams, with a table tracing each transition to spec text and a test |
 | [docs/c02-change-impact.md](docs/c02-change-impact.md) | C02: impact analysis of the approval change (v0.1 → v0.2), done before the specification was edited |
@@ -34,8 +34,8 @@ lifecycle is in [docs/diagrams.md](docs/diagrams.md).
 
 ```
 create   : [start] -> DRAFT
-confirm  : DRAFT -> CONFIRMED                       (no seat needs approval)
-           DRAFT -> PENDING_APPROVAL                (a seat needs approval)
+confirm  : DRAFT -> CONFIRMED                       (no seat needs approval; until the screening starts, v0.3)
+           DRAFT -> PENDING_APPROVAL                (a seat needs approval; until the screening starts, v0.3)
 approve  : PENDING_APPROVAL -> CONFIRMED
 reject   : PENDING_APPROVAL -> REJECTED
 cancel   : DRAFT | PENDING_APPROVAL | CONFIRMED -> CANCELLED   (until the screening starts)
@@ -118,7 +118,7 @@ python3 -m venv .venv
 npm --prefix src/frontend ci && npm --prefix src/frontend run dev   # UI on http://localhost:5173
 ```
 
-Expected result: **80 passed** — `test_c02_operations.py` 49, `test_api.py` 7, `test_lifecycle.py` 7,
+Expected result: **86 passed** — `test_c02_operations.py` 54, `test_api.py` 7, `test_lifecycle.py` 8,
 `test_notifications.py` 6, `test_c05_transition.py` 5, `test_architecture.py` 4, `test_double_booking_spike.py` 2. Among them:
 
 ```
@@ -156,8 +156,8 @@ the backend first.
 | `POST /reservations` `{user_id, screening_id, seat_ids}` | 201 DRAFT hold · 404 · 409 taken · 422 orphan seat |
 | `GET /reservations/{id}` | reservation with its seats |
 | `GET /users/{id}/reservations` | a user's reservations |
-| `POST /reservations/{id}/confirm` | DRAFT → CONFIRMED, or DRAFT → PENDING_APPROVAL if a seat needs approval (409 if expired or seat taken) |
-| `POST /reservations/{id}/cancel` | → CANCELLED (until the screening starts) |
+| `POST /reservations/{id}/confirm` | DRAFT → CONFIRMED, or DRAFT → PENDING_APPROVAL if a seat needs approval (409 if expired, seat taken or the screening has started) |
+| `POST /reservations/{id}/cancel` | → CANCELLED, returns `cancelled_at` (until the screening starts) |
 | `POST /reservations/{id}/decision` `{decision: approve\|reject}` | box office: PENDING_APPROVAL → CONFIRMED / REJECTED |
 | `POST /movies` `{title, duration_minutes, …}` | add a movie; notifies every user |
 | `POST /users/{id}/notifications/deliver` | the browser's poll: undelivered notifications, marked delivered |
@@ -179,7 +179,7 @@ docs/
   c02-change-impact.md               C02: impact analysis of the approval change
   architecture-and-decisions.md      architecture sketch, ADR-001 .. ADR-008, C03 Part A
   c03-architecture.md                C03: drivers, alternatives, views, AS-IS -> TO-BE delta
-  evidence-and-evolution.md          C01 spike, C02 evidence, C03 evidence
+  evidence-and-evolution.md          C01 spike, C02 evidence, C03 evidence, C04 note, C05 evidence, v0.3 change
   where-to-find-what.md              navigation map (Czech): decisions, drivers, operations -> docs, code, tests
   review.html                        C01 team review page (Czech, open in a browser)
   trace_confirm.py                   C03 Part A runtime trace of the Confirm conflict (throw-away database)

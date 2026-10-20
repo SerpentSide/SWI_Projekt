@@ -196,7 +196,7 @@ flowchart TB
     subgraph rs [Reservation System]
         ui["Web UI (React)<br/>screens, seat map, polling<br/>owns: nothing"]
         api["HTTP API — main.py<br/>routes, validation, error to status mapping<br/>owns: nothing (no business state)"]
-        rm["Reservation Management — reservations.py<br/>lifecycle, approval, BR-02 decision, transaction<br/>owns: Reservation state in both tables"]
+        rm["Reservation Management — reservations.py (+ lifecycle.py since C05)<br/>lifecycle, approval, BR-02 decision, transaction<br/>owns: Reservation state in both tables"]
         av["Availability — availability.py<br/>definition of occupied, no-orphan rule<br/>owns: the rules (no data)"]
         ni["Notification Integration — notifications.py<br/>NotificationService, failure isolation<br/>owns: notifications outbox"]
         store[("Reservation Store — db.py, schema.sql (SQLite)<br/>owns: persistent data, unique index uq_confirmed_seat_per_screening")]
@@ -212,7 +212,7 @@ flowchart TB
     rm -- "SQL inside write_tx" --> store
     av -- "read SQL" --> store
     ni -- "insert / mark delivered" --> store
-    api -. "catalogue reads: movies, screenings, users" .-> store
+    api -. "catalogue data: movies, screenings, users (reads; login and POST /movies insert)" .-> store
 ```
 
 | Element | Main responsibility | owns |
@@ -263,7 +263,8 @@ flowchart LR
 One backend process contains five logical elements; the SPA runs in the browser (in development served by Vite on
 port 5173); the database is a file. No message broker, no second service. Mapping: Web UI → browser;
 HTTP API, Reservation Management, Availability, Notification Integration → the Python process (modules `main`,
-`reservations`, `availability`, `notifications`); Reservation Store → `db.py` in that process and the SQLite file.
+`reservations` + `lifecycle` (C05), `availability`, `notifications`); Reservation Store → `db.py` in that process and
+the SQLite file.
 
 ---
 
@@ -282,7 +283,7 @@ sequenceDiagram
     UI->>API: POST /reservations/{id}/confirm
     API->>RM: confirm(id, at)
     RM->>ST: BEGIN IMMEDIATE, load reservation
-    RM->>RM: guards (DRAFT, hold alive), needs_approval
+    RM->>RM: guards (DRAFT, hold alive, screening not started — v0.3), needs_approval
     RM->>ST: change state in reservations + reservation_seats
     alt a seat is already CONFIRMED elsewhere (BR-02)
         ST-->>RM: IntegrityError
@@ -315,7 +316,9 @@ classDiagram
         get(db, reservation_id, at)
         list_for_user(db, user_id, at)
         effective_state(db, reservation, at)
-        -change_state(db, reservation_id, state)
+        transition(db, reservation_id, command, at) state
+        -load_facts(db, reservation_id)
+        -change_state(db, reservation_id, transition, at)
         -guard_br02()
     }
     class ReservationError {
@@ -366,6 +369,10 @@ classDiagram
 
 The code keeps rows as dictionaries (plain SQL, ADR-002), so `Reservation` and `ReservationSeat` are the
 persistent entities (tables), and the modules are the "classes" with behaviour.
+
+Since C05, `confirm`, `cancel` and `decide` are one-line wrappers around `transition`, and the guards are
+decided by the pure lifecycle policy `lifecycle.py` inside Reservation Management. The focused view of that
+split is C05 DD 3.4 in [`architecture-and-decisions.md`](architecture-and-decisions.md).
 
 ---
 

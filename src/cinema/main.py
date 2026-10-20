@@ -207,7 +207,8 @@ def confirm_reservation(reservation_id: int, db=Depends(get_db)):
 
 @app.post("/reservations/{reservation_id}/cancel")
 def cancel_reservation(reservation_id: int, db=Depends(get_db)):
-    return {"reservation_id": reservation_id, "state": reservations.cancel(db, reservation_id, now())}
+    at = now()  # one instant: the transition writes it as cancelled_at (OP-04)
+    return {"reservation_id": reservation_id, "state": reservations.cancel(db, reservation_id, at), "cancelled_at": at}
 
 
 @app.post("/reservations/{reservation_id}/decision")

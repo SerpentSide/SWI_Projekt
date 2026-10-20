@@ -54,7 +54,7 @@ screening: `[screening.starts_at, screening.starts_at + movie.duration]`.
 | Operation | Effect |
 |---|---|
 | **Create reservation** | Validates the request, holds the chosen seats, returns a reservation in state `DRAFT` with a `hold_until` deadline. Only accepted while the screening has not started. |
-| **Confirm reservation** | Only while the hold is still alive. `DRAFT` -> `CONFIRMED` — the operation that makes the seat definitively sold — **unless a seat in the reservation requires approval; then `DRAFT` -> `PENDING_APPROVAL` and the seats stay held until a decision (v0.2).** |
+| **Confirm reservation** | Only while the hold is still alive and (v0.3) the screening has not started. `DRAFT` -> `CONFIRMED` — the operation that makes the seat definitively sold — **unless a seat in the reservation requires approval; then `DRAFT` -> `PENDING_APPROVAL` and the seats stay held until a decision (v0.2).** |
 | **Approve reservation** *(v0.2)* | A box office operator decides a `PENDING_APPROVAL` reservation: approve -> `CONFIRMED`, reject -> `REJECTED`. Only until the screening starts. |
 | **Cancel reservation** | `DRAFT`, `PENDING_APPROVAL` or `CONFIRMED` -> `CANCELLED`, allowed until the screening starts. Frees the seats. |
 | **Check availability** | Returns the seat map of a screening, each seat marked free or occupied. |
@@ -99,8 +99,8 @@ for confirm.
 
 ```
 [start] --create-------------------------------------> DRAFT
-DRAFT   --confirm  [no seat needs approval]-----------> CONFIRMED
-DRAFT   --confirm  [a seat needs approval]------------> PENDING_APPROVAL      (v0.2)
+DRAFT   --confirm  [no seat needs approval]-----------> CONFIRMED  (until the screening starts, v0.3)
+DRAFT   --confirm  [a seat needs approval]------------> PENDING_APPROVAL      (v0.2; until the screening starts, v0.3)
 DRAFT   --hold_until passes---------------------------> EXPIRED    (derived)
 PENDING_APPROVAL --approve----------------------------> CONFIRMED             (v0.2)
 PENDING_APPROVAL --reject-----------------------------> REJECTED              (v0.2)

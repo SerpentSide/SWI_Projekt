@@ -85,9 +85,11 @@ CREATE TABLE reservation_seats (
 
 -- THE invariant: a seat can be confirmed at most once per screening.
 --
--- Partial, so that DRAFT / CANCELLED / EXPIRED rows may coexist freely for the same
--- seat -- several people are allowed to *hold* a seat's candidacy, but only one of
--- them can end up owning it.
+-- Partial, so that the rows of finished reservations (CANCELLED, REJECTED, an expired
+-- DRAFT) may coexist with a later reservation of the same seat. Live holds are exclusive
+-- too -- at most one live DRAFT or PENDING_APPROVAL per seat (OP-01, BR-02) -- but that is
+-- enforced by create's write lock, not here: an expired hold still reads 'DRAFT' in this
+-- table (ADR-003), so an index over DRAFT rows would block the seat forever.
 --
 -- This is equivalent to the time-based rule in the Project Frame only while screenings
 -- in one hall never overlap. That assumption is recorded in

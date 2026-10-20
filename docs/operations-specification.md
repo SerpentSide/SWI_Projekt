@@ -1,8 +1,12 @@
 # Operations Specification (C02)
 
-**Version: Specification Baseline v0.2 — approved by the team (all four members, sign-off in [`diagrams.md`](diagrams.md), confirmed 2026-10-13).** v0.1 is the four-operation
+**Version: Specification Baseline v0.3** = v0.2 (approved by the team, all four members, sign-off in
+[`diagrams.md`](diagrams.md), confirmed 2026-10-13) plus one change: **Confirm is refused once the screening
+has started** (2026-10-20; sign-off of v0.3 in [`diagrams.md`](diagrams.md)). v0.1 is the four-operation
 version at commit `1a7e2e6`; what changed and what did not is in
-[`c02-change-impact.md`](c02-change-impact.md). Passages changed by v0.2 are marked *(v0.2)*.
+[`c02-change-impact.md`](c02-change-impact.md). Passages changed by v0.2 are marked *(v0.2)*, by v0.3
+*(v0.3)*; why v0.3 was needed is in [`evidence-and-evolution.md`](evidence-and-evolution.md), "Change after
+C05: Confirm is start-guarded (v0.3)".
 
 This document is the complete minimum-behavior specification for the core operations named
 in the Project Frame ([`intent-and-change.md`](intent-and-change.md#core-operations)):
@@ -100,7 +104,7 @@ see the Assumption below for how it is met.
   (A3 would be stranded — the third worked example in `intent-and-change.md`).
 - Requesting a seat already held as a live `DRAFT` by another user → `409`.
 - Requesting a seat for screening 99 which does not exist → `404`.
-- now < screening.starts\_at → `409`
+- A screening that has already started (`now >= screening.starts_at`) → `409`.
 - Two `create` requests for the same seat arriving together → exactly one `201`, the other
   `409`; never two `201`s for the same seat — the same shape of outcome the C01
   spike measured for confirm (`evidence-and-evolution.md`, Run 2), now required of create
@@ -146,9 +150,10 @@ screening does not exist.
 ### Main success scenario
 1. Client requests availability for a screening id.
 2. System loads every seat belonging to that screening's hall.
-3. For each seat, system evaluates Occupied against the current time (CONFIRMED, or DRAFT
-   with `hold_until` in the future).
-4. System returns the full seat map with one `free`/`occupied` entry per seat.
+3. For each seat, system evaluates Occupied against the current time (CONFIRMED, DRAFT
+   with `hold_until` in the future, or *(v0.2)* PENDING_APPROVAL of a screening that has not
+   started).
+4. System returns the full seat map, one entry per seat with its `occupied` flag.
 
 ### Alternative / failure outcomes
 - Unknown `screening_id` → `404`.
@@ -191,13 +196,15 @@ README "Definition of 'occupied'"; ADR-003; ADR-004's demotion note.
 **Trigger:** `POST /reservations/{reservation_id}/confirm`.
 
 **Observable requirement(s):** `200` with the reservation's id and its new state, or a
-documented failure. *(v0.2)* The new state is `CONFIRMED` (plus `confirmed_at`) when no seat
+documented failure. *(v0.2)* The new state is `CONFIRMED` (and `confirmed_at` is set) when no seat
 of the reservation requires approval, and `PENDING_APPROVAL` when at least one does.
 
 **Preconditions:**
 - The reservation exists.
 - Its (lazily evaluated) state is `DRAFT` — i.e. stored `state = 'DRAFT'` **and**
   `hold_until` has not passed.
+- *(v0.3)* The screening has not started (`now < screening.starts_at`, BR-01) — even while the
+  hold is still running.
 
 **Success postcondition:** *(v0.2, two cases)*
 - no seat requires approval: reservation `state = CONFIRMED`, `confirmed_at = now`; every
@@ -220,11 +227,12 @@ boundary rule ("a failed notification must never fail a confirmed reservation").
 ### Main success scenario
 1. Client requests confirm on a reservation id.
 2. System begins a transaction and attempts to move the reservation from `DRAFT`
-   (with `hold_until` still in the future) to `CONFIRMED`, atomically with the same
-   guard as the read.
+   (with `hold_until` still in the future and, *(v0.3)*, the screening not yet started) to
+   `CONFIRMED`, atomically with the same guard as the read.
 3. System writes `CONFIRMED` to every `reservation_seats` row of that reservation in the
    same transaction.
-4. The database's `uq_confirmed_seat_per_screening` index is checked at commit. If any of
+4. The database's `uq_confirmed_seat_per_screening` index is checked when the seat rows are
+   updated (SQLite checks a unique index per statement, not at commit — C03 Part A3). If any of
    this reservation's seats is already `CONFIRMED` for this screening under a different
    reservation, the write fails and the whole transaction is rolled back — no seat of this
    reservation ends up `CONFIRMED`.
@@ -254,6 +262,11 @@ is **not specified** — see the Assumption below.
   pending reservation is decided through Approve, not by confirming again.)*
 - Reservation is `DRAFT` but `hold_until` has passed → `409` (hold expired) — the lazy
   `EXPIRED` case from ADR-003. The reservation afterwards reads as `EXPIRED` and holds no seats.
+- *(v0.3)* The screening has already started (`now >= starts_at`) while the hold is still
+  running → `409`; the reservation stays `DRAFT` and nothing is notified. Without this guard a
+  `DRAFT` created just before the start could be confirmed up to 15 minutes into the screening,
+  and on a seat that requires approval it would end `PENDING_APPROVAL` that already reads
+  `EXPIRED` and occupies nothing.
 - The database rejects the write because a seat in this reservation is already `CONFIRMED`
   elsewhere (`uq_confirmed_seat_per_screening`) → `409`. This is the exact scenario measured
   in the C01 spike.
@@ -268,6 +281,8 @@ is **not specified** — see the Assumption below.
   still reads `occupied`; the reservation is **not** `CONFIRMED`. `DRAFT` on ordinary seats
   → `200 CONFIRMED`, unchanged from v0.1.
 - Confirm a reservation whose `hold_until` is one second in the past → `409`, and the reservation reads as `EXPIRED`.
+- *(v0.3)* Confirm a `DRAFT` whose hold is still running at the instant its screening starts →
+  `409`, and it stays `DRAFT` — also when a seat requires approval.
 - Confirm a reservation with two seats where a different reservation has since confirmed
   one of them → `409`, and **neither** of this reservation's seats is left
   `CONFIRMED` (atomicity check).
@@ -359,7 +374,7 @@ approval, so that the viewer either gets the seats or knows they will not.
 decision of `approve` or `reject`.
 
 **Observable requirement(s):** `200` with the reservation's id and new state — `CONFIRMED`
-(plus `confirmed_at`) for `approve`, `REJECTED` for `reject` — or a documented failure.
+(and `confirmed_at` is set) for `approve`, `REJECTED` for `reject` — or a documented failure.
 
 **Preconditions:**
 - The caller is acting as a box office operator. How that is established is **not** part of
@@ -388,7 +403,7 @@ is terminal); ADR-005 (reservation and seat rows change together, in one transac
    `PENDING_APPROVAL` and the screening has not started.
 3. `approve`: system writes `CONFIRMED` and `confirmed_at = now` to the reservation and
    `CONFIRMED` to every one of its seat rows, in the same transaction; the unique index is
-   checked at commit, exactly as in Confirm.
+   checked when the seat rows are updated, exactly as in Confirm.
    `reject`: system writes `REJECTED` to the reservation and to every one of its seat rows.
 4. On commit, system calls `NotificationService.reservation_approved(reservation)` for an
    approval or `NotificationService.reservation_rejected(reservation)` for a rejection, and
@@ -455,7 +470,8 @@ derived as `[screening.starts_at, screening.starts_at + movie.duration)`
 document reads `now < starts_at` (closed at the start instant, not `now <= starts_at`).
 
 Applies to: OP-01 (the screening-not-started precondition), OP-03 (the interval that BR-02's
-overlap check is defined over), OP-04 (the cancellation deadline).
+overlap check is defined over and, *(v0.3)*, the screening-not-started precondition), OP-04 (the
+cancellation deadline), OP-05 (the approval deadline).
 
 ### BR-02 — Exclusive Resource invariant
 
@@ -490,9 +506,9 @@ physical delete: the row, its `id`, and its history (`created_at`, `confirmed_at
 are retained. `CANCELLED`, `EXPIRED` and *(v0.2)* `REJECTED` are all terminal — none accepts
 any further transition, so cancelling one of them is rejected, not a no-op.
 
-Applies to: OP-04 (its own rule), OP-01 and OP-03 (both share the same
-`now < screening.starts_at` boundary and the same "only `DRAFT`/`CONFIRMED` may still be
-acted on" precondition).
+Applies to: OP-04 (its own rule); OP-01, OP-03 *(v0.3)* and OP-05 share its
+`now < screening.starts_at` boundary; OP-03 and OP-05 share its terminal states (a `CANCELLED`,
+`EXPIRED` or `REJECTED` reservation cannot be confirmed or decided either).
 
 ### BR-04 — Domain-specific rule from C01: no orphan seat
 

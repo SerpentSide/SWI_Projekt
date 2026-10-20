@@ -5,9 +5,10 @@ Three views of the same minimum system, all drawn from
 diagram and the text disagree, the text wins and the diagram is a bug). Mermaid, so GitHub
 renders them and they diff as text.
 
-These are the **v0.2** diagrams (approval change, see [`c02-change-impact.md`](c02-change-impact.md)).
-Elements added by v0.2 are marked *(v0.2)* in the text and drawn with a dashed line where the
-diagram type allows it. The v0.1 diagrams are the same file at commit `1a7e2e6`.
+These are the **v0.3** diagrams: the v0.2 approval change (see [`c02-change-impact.md`](c02-change-impact.md))
+plus v0.3's start guard on confirm. Elements added by v0.2 are marked *(v0.2)* in the text and drawn with a
+dashed line where the diagram type allows it; v0.3 changed two guards and one decision, marked *(v0.3)*.
+The v0.1 diagrams are the same file at commit `1a7e2e6`.
 
 **Baseline status: Specification Baseline v0.1 and v0.2 — approved by the team (2026-10-13).** Each member ticked the box after reading the spec, `c02-review.md`, `c02-change-impact.md` and these diagrams.
 
@@ -15,6 +16,15 @@ diagram type allows it. The v0.1 diagrams are the same file at commit `1a7e2e6`.
 - [x] Jiří Ševeček
 - [x] Šimon Adámek
 - [x] Stanislav Urban
+
+**Specification Baseline v0.3 — confirm is refused once the screening has started (2026-10-20).** Each member
+ticks the box after reading OP-03 and BR-01/BR-03 in the spec and "Change after C05: Confirm is start-guarded
+(v0.3)" in `evidence-and-evolution.md`.
+
+- [ ] Jan Procházka
+- [ ] Jiří Ševeček
+- [ ] Šimon Adámek
+- [ ] Stanislav Urban
 
 ## 1. Use cases — actors and goals
 
@@ -70,8 +80,8 @@ half-open conventions of BR-01: `now < starts_at`, `hold_until > now`.
 ```mermaid
 stateDiagram-v2
     [*] --> DRAFT: create [screening not started, seats free, no orphan]
-    DRAFT --> CONFIRMED: confirm [hold_until > now, no seat needs approval, no seat already CONFIRMED elsewhere]
-    DRAFT --> PENDING_APPROVAL: confirm [hold_until > now, a seat needs approval] (v0.2)
+    DRAFT --> CONFIRMED: confirm [hold_until > now, now < starts_at (v0.3), no seat needs approval, no seat already CONFIRMED elsewhere]
+    DRAFT --> PENDING_APPROVAL: confirm [hold_until > now, now < starts_at (v0.3), a seat needs approval] (v0.2)
     PENDING_APPROVAL --> CONFIRMED: approve [now < starts_at, no seat already CONFIRMED elsewhere] (v0.2)
     PENDING_APPROVAL --> REJECTED: reject [now < starts_at] (v0.2)
     DRAFT --> CANCELLED: cancel [now < starts_at]
@@ -149,7 +159,9 @@ flowchart TD
     d -- no --> e409a[/409 invalid state/]
     d -- yes --> hold{hold_until > now?}
     hold -- no --> e409b[/409 hold expired/]
-    hold -- yes --> ap{does any seat<br/>require approval?}
+    hold -- yes --> st{now < starts_at?<br/>v0.3}
+    st -- no --> e409d[/409 screening started/]
+    st -- yes --> ap{does any seat<br/>require approval?}
     ap -- yes --> pend[UPDATE reservation AND all its seats<br/>to PENDING_APPROVAL]
     pend --> commitp[COMMIT]
     commitp --> notifyp[NotificationService.reservation_pending_approval<br/>outcome ignored]
@@ -222,7 +234,8 @@ Each edge of the state diagram, traced to the text and to an executed test
 | `DRAFT → EXPIRED` (derived) | OP-02 timing example, ADR-003 | `TestAvailability::test_hold_boundary_is_exclusive`, `TestConfirm::test_expired_hold_reads_as_expired_and_holds_no_seats` |
 | no arrow out of `CANCELLED` | BR-03 | `TestCancel::test_already_cancelled_is_409`, `TestConfirm::test_cancelled_is_409` |
 | no arrow out of `EXPIRED` | BR-03 | `TestCancel::test_expired_is_409`, `TestConfirm::test_expired_hold_is_409` |
-| cancel refused after start (both states) | BR-03 | `TestCancel::test_confirmed_after_start_is_409`, `::test_draft_after_start_is_409` |
+| cancel refused after start (both states) | BR-03 | `TestCancel::test_confirmed_after_start_is_409`, `::test_draft_after_start_is_409`, `::test_cancel_at_the_exact_start_instant_is_409` |
+| confirm refused once the screening started, hold still running *(v0.3)* | OP-03, BR-01 | `TestConfirm::test_live_draft_at_the_start_instant_is_409`, `TestConfirmNeedingApproval::test_vip_confirm_after_start_is_409_and_sends_no_notification` |
 | one winner among concurrent creates | BR-02, OP-01 | `TestCreate::test_two_simultaneous_creates_on_one_seat_give_exactly_one_201` |
 | one winner among concurrent confirms | BR-02, OP-03 | `TestConfirm::test_two_simultaneous_confirms_on_one_seat_give_exactly_one_200` |
 | confirm is all-or-nothing | OP-03 | `TestConfirm::test_multi_seat_conflict_leaves_no_seat_confirmed` |
