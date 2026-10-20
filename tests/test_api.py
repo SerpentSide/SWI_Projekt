@@ -109,13 +109,13 @@ def test_seed_has_no_hall_overlaps_or_orphans(client):
 
 
 def test_double_confirm_is_409(client):
-    """Two DRAFT holds on the same seat are legal; only one can be confirmed (ADR-004)."""
+    """Even if two DRAFT holds on one seat existed, only one could be confirmed (ADR-004: the index is the last line of defence)."""
     screening_id, row = free_row(client)
     seats = [row[1], row[2]]
     body = {"user_id": 1, "screening_id": screening_id, "seat_ids": seats}
     first = client.post("/reservations", json=body).json()["reservation_id"]
-    # A second hold on the same seats is refused by the availability check, so plant it
-    # directly - this is the state two racing viewers can reach.
+    # create refuses a second live hold on the same seats (OP-01, under its write lock), so
+    # plant it directly - the state a writer that bypassed write_tx could leave behind.
     conn = connect()
     second = conn.execute(
         "INSERT INTO reservations (user_id, screening_id, state, hold_until) VALUES (2, ?, 'DRAFT', '2999-01-01T00:00:00Z')",

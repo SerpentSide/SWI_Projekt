@@ -334,12 +334,27 @@ Remaining uncertainty / risk:
 
 Commit/tag: tag `c03-architecture` = commit `817fdd2` (docs `14a7a5e`, code `2c47953`, evidence `817fdd2`); merged to `main` by PR #8 as `6712074`. The 68 tests above were run on this code.
 
-Follow-up before C04 (PR #11, branch `pre-c04-fixes`, after the tag above):
+Follow-up after the C03 tag (PR #11, branch `pre-c04-fixes` — named after the exercise number, see "C04" below):
 - `reservations.confirm` no longer writes `EXPIRED` when the hold has passed: it answers `409` and the row stays `DRAFT`, which reads as `EXPIRED` and occupies nothing. This is what the state diagram (`diagrams.md`: "derived, not stored"), C1, G3 and I of `c03-architecture.md` and ADR-003 already said; only the code stored it. Nothing observable changes (C02 mismatch 7: the stored column is not observable).
 - `/auth/login` uses `INSERT OR IGNORE` instead of `ON CONFLICT … DO NOTHING`, so the API also runs on Python builds whose bundled SQLite is older than 3.24. On such a build (Python 3.11.8, SQLite 3.19.3) 51 of the 68 tests failed before, including the walking skeleton.
 - `docs/trace_confirm.py` set `cinema.main.DB_PATH`, which `connect`/`reset_db` no longer read after the refactor (they live in `cinema.db`). Run as documented, it wiped the developer database `cinema.sqlite3` and left one reservation `CONFIRMED` with `DRAFT` seats in it. It now points `cinema.db.DB_PATH` at a throw-away file; its output is the same as in A3 and the developer database is untouched (checked with a marker row).
 - ADR-007's status records that the frontend exists although the ADR deferred it; the CP1 path stays API-only.
 - Verified: 68 passed on SQLite 3.19.3 and on 3.53.1; walking skeleton over HTTP against `uvicorn` on SQLite 3.19.3 (login 200 → `POST /reservations` 201 `DRAFT` → seats occupied → same seats 409 → confirm 200 `CONFIRMED` → notification delivered → cancel 200); confirm after the hold → 409, stored `DRAFT` in both tables, reads `EXPIRED`, seats free.
+
+---
+
+## C04 — no artifact: the assignment was not given
+
+C04 *Quality & Measurement* (quality concern → evaluable criterion → measurement → trade-off/decision) was not
+assigned in our run of the course: the fourth exercise continued the C03 architecture assignment. Our branches
+are named after the exercise number, not the assignment, which is why `CV4`, `c04`, `c04_finalization` and
+`pre-c04-fixes` all hold C03 work or follow-up fixes, and none of them a quality measurement. There is therefore
+no C04 artifact in this repository, and C06's Q1–Q3 do not apply.
+
+The closest quality-related material, for orientation only: the selected future pressure (category Q, a
+premiere on-sale burst) in [`intent-and-change.md`](intent-and-change.md), and the C01 spike above, which
+measured BR-02 under two concurrent confirms and states that the burst itself is unmeasured ("What this did
+not answer").
 
 ---
 
@@ -423,7 +438,7 @@ Python 3.14, `python -m pytest -q`:
 |---|---|---|---|
 | 3.1 pure lifecycle policy in its own module; no DB, no clock, refusals as values | YES | `src/cinema/lifecycle.py` imports only `dataclasses`, `enum`; U1–U5 run without a database | keep |
 | 3.2 `TRANSITIONS` table = state diagram, terminal states in no row | YES | `lifecycle.TRANSITIONS`; U1 compares all 160 combinations with the diagram's edges | keep |
-| 3.2 confirm is **not** start-guarded (follows OP-03 over BR-03's "Applies to") | YES | `Rule(frozenset({"DRAFT"}), False, None)`; U1 (`started` does not matter for confirm) | keep — recorded as a design risk below |
+| 3.2 confirm is **not** start-guarded (follows OP-03 over BR-03's "Applies to") | YES | `Rule(frozenset({"DRAFT"}), False, None)`; U1 (`started` does not matter for confirm) | keep — recorded as a design risk below. *Changed after C05 (spec v0.3): confirm is start-guarded, see "Change after C05" below* |
 | 3.3 contract of `plan`: precedence state check → start guard; reasons name the effective state | YES | `lifecycle.plan`; U4, U5 | keep |
 | 3.3 contract of `transition`: one command path; `confirm` / `cancel` / `decide` are one-line wrappers; signatures unchanged | YES | `reservations.transition`; API (`main.py`) not changed; C02 acceptance tests pass unchanged | keep |
 | 3.2 / 4.1 `_load_facts` reads the facts **inside** `write_tx` | YES | `transition` calls `lifecycle.plan(command, _load_facts(...), at)` inside `with write_tx(db)` | keep |
@@ -448,7 +463,8 @@ the fact. Two places where the **code** was changed to follow the DD, not the ot
 
 - **Confirm after the screening start.** A `DRAFT` created just before `starts_at` can be confirmed up to 15
   minutes after it (OP-03 and the state diagram allow it, BR-03's "Applies to" line suggests not). Needs a product
-  decision; the change would be one cell of `TRANSITIONS` plus U1's oracle.
+  decision; the change would be one cell of `TRANSITIONS` plus U1's oracle. *Update: resolved by spec v0.3 —
+  "Change after C05: Confirm is start-guarded (v0.3)" below.*
 - **User-facing wording.** The frontend shows the API's `detail` text, so a viewer now reads
   "Cannot confirm a EXPIRED reservation" instead of "Reservation hold has expired". Correct by the spec, less
   friendly; a later change could map refusal reasons to UI texts in the frontend.
@@ -463,3 +479,52 @@ the fact. Two places where the **code** was changed to follow the DD, not the ot
 Branch `c05-detailed-design` (from `main` at `bb52a6e`). DD, implementation, tests and the evidence above:
 commit `f0fb6e1`. Tag `c05-dd` = the commit that adds this section. The 80 tests above were run on
 this code.
+
+The tag points to `44967dd`, which is on no branch: that commit was amended after tagging, and `main` holds
+`0c810ce` instead. Both have the parent `f0fb6e1` and the same tree (`git diff 44967dd 0c810ce` is empty), so
+the tagged content is exactly what is on `main`.
+
+---
+
+## Before C06: our own pre-assessment and Specification Baseline v0.3
+
+Before handing the project to the assessing team we went through the C06 checklist ourselves on `main` at
+`9933331` and reproduced every suspected mismatch with a temporary test before changing anything. Each fix
+below starts with a test that failed on `9933331` (or, for behaviour that was already right, a test that we
+checked fails when the code is broken on purpose).
+
+### Change after C05: Confirm is start-guarded (v0.3)
+
+| | |
+|---|---|
+| Found | The C05 risk "confirm after the screening start" (above) had a worse case than recorded: a `DRAFT` on a seat that requires approval, confirmed 5 minutes after `starts_at` with its hold still running, answered `200 PENDING_APPROVAL`, queued the notification "Rezervace uložena - čeká na schválení", and then read `EXPIRED` with its seats free — against OP-03's postcondition "its seats stay occupied". On ordinary seats the same request confirmed a seat of a screening already running, which then could not be cancelled (BR-03). |
+| Decision | Confirm is refused (`409 "The screening has already started"`) once `now >= starts_at`, like every other command. OP-03 now agrees with BR-01 and BR-03. The rejected alternative — keep the behaviour and document an exception in OP-03 — would have made "a reservation that already reads `EXPIRED`" a success outcome of confirm. |
+| Specification | Baseline **v0.3**: OP-03 precondition, failure outcome and verification example; BR-01 and BR-03 "Applies to"; state diagram guards and OP-03 activity in `diagrams.md` (with a v0.3 sign-off list); Project Frame core operations and state list; README. |
+| Design | C05 DD: R3, table 3.2 (the confirm cell is now "yes"), the note under it, decision-table rows 1–2 and new row 16; C03 H1 guards. |
+| Code | One cell: `lifecycle.TRANSITIONS[Command.CONFIRM].needs_not_started = True`. |
+| Tests (red first) | `test_lifecycle.py`: U1's oracle (the diagram edge now has `now < starts_at`), new **U6** `test_confirm_of_a_live_draft_after_the_start_is_refused_by_the_start_guard` (row 16). `test_c02_operations.py`: `TestConfirm::test_live_draft_at_the_start_instant_is_409` (boundary `now == starts_at`), `TestConfirmNeedingApproval::test_vip_confirm_after_start_is_409_and_sends_no_notification`. All four failed on `9933331`. |
+| Observable change | Confirm in the last minutes of a hold that outlives the screening start: `200` → `409`. Nothing else. |
+
+### Other mismatches fixed
+
+| # | Found | Verdict | Resolution |
+|---|---|---|---|
+| 1 | OP-04 requires the cancel response to carry `cancelled_at`; the API returned only `reservation_id` and `state`, and no test looked at `cancelled_at` at all | implementation | the response carries the instant written as `cancelled_at`; `TestCancel::test_response_carries_cancelled_at` (failed before) |
+| 2 | OP-01's verification example said `now < starts_at → 409` | spec (typo) | `now >= starts_at → 409` |
+| 3 | OP-02 step 3 left `PENDING_APPROVAL` out of "occupied" | spec | step 3 follows the Definition of Occupied |
+| 4 | OP-03 step 4 and OP-05 step 3 said the unique index is checked "at commit"; SQLite checks it per statement (C03 Part A3, D1) | spec | "when the seat rows are updated" |
+| 5 | `schema.sql` and `test_api.py::test_double_confirm_is_409` said two `DRAFT` holds on one seat are legal — against the Project Frame and BR-02 (one live hold per seat) | comments | both now say that live holds are exclusive through create's write lock and that the index only backs `CONFIRMED` |
+| 6 | ADR-003 promised "a single shared query helper"; expiry is evaluated in two places | ADR text | ADR-003 names both places, one per question, and the tests that pin their common boundary |
+| 7 | C03 G2/G4/H2 did not know `lifecycle.py` and `transition` (added by C05); G2's catalogue arrow said "reads" though login and `POST /movies` insert | views | updated, with a pointer to C05 DD 3.4 |
+| 8 | Untested specified outcomes: unknown viewer → `404` (OP-01), cancel at exactly `starts_at` → `409` (BR-01) | verification gap | `TestCreate::test_unknown_viewer_is_404`, `TestCancel::test_cancel_at_the_exact_start_instant_is_409`. Both passed at once, because the code was right; both fail when the user check is removed or `starts_at <= at` becomes `<` (checked, then reverted) |
+
+### Verification run
+
+`python -m pytest -q` on Python 3.11.8: **86 passed** (80 before + 6 new: U6 and five C02 acceptance tests).
+Before the code change the same suite gave 5 failed, 81 passed — the five red-first tests above.
+
+Still open, unchanged and known: OP-05's `403` (no roles), owner checks on cancel, a lost notification after
+a crash between commit and notify (C03, C05 risks); and BR-04 after a cancel: a cancel may leave an isolated
+free seat (the rule is checked at create only, ADR-006), and from then on every create in that row that does
+not take the seat is refused — the formal definition ("no row touched may *contain* a run of length 1") says
+so, the rule's one-line wording ("must not *leave*") reads more narrowly.

@@ -110,7 +110,12 @@ adds a scheduler, a failure mode, and an operational thing to monitor.
 **Consequences.** The `EXPIRED` state may be *implicit* in the table for a while: a row can
 read `DRAFT` while behaving as expired. Every availability query must therefore include the
 `hold_until > now()` predicate, and forgetting it in one query is a plausible bug. We accept
-that and keep the predicate in a single shared query helper rather than repeating it.
+that and keep the predicate in one shared place per question rather than repeating it in every
+query: `availability.OCCUPIED_SEATS_SQL` answers which seats are occupied (every availability check
+uses it), and since C05 `lifecycle.effective_state` answers which state a reservation reads as (every
+read and every command uses it). Both compare
+`hold_until` and `starts_at` with the same half-open boundary, and both are tested at it
+(`TestAvailability::test_hold_boundary_is_exclusive`, `test_lifecycle.py` U3).
 Since PR #11 nothing writes `EXPIRED` at all: Confirm used to store it when it refused an expired
 hold, now the row keeps `DRAFT` (or `PENDING_APPROVAL`) and only reads as `EXPIRED`.
 
@@ -503,7 +508,7 @@ the read side (`get`, `list_for_user`) uses only R1.
 |---|---|---|
 | **R1** | **Derive the effective state** of a Reservation at one instant `at`: a `DRAFT` with `hold_until <= at`, or a `PENDING_APPROVAL` whose screening has `starts_at <= at`, *is* `EXPIRED`; otherwise the stored state. | ADR-003: expiry is never written, so it must be computed — and computed the **same way** by every read and every command. OP-03/OP-05 require the 409 reason to name the *current* (lazily derived) state. Today `confirm` names the stored state, so a pending reservation of a started screening is reported as `PENDING_APPROVAL`, not `EXPIRED`. |
 | **R2** | **Decide whether the command is allowed from the effective state**: one table *command × effective state → allowed / refused*. Refusal carries the effective state in its reason. | C02 state diagram and BR-03: `CANCELLED`, `EXPIRED`, `REJECTED` are terminal; confirm only from `DRAFT`, approve/reject only from `PENDING_APPROVAL`, cancel from `DRAFT`/`PENDING_APPROVAL`/`CONFIRMED`. Today these rules are three separate `if`s in three functions; a new state or command (the next change card) would have to be added to each. |
-| **R3** | **Check the screening-start guard** `at < starts_at` (BR-01) for the commands that need it: cancel, approve, reject. | Independent of R1: a `DRAFT` whose 15-minute hold is still running can belong to a screening that has just started — its effective state is `DRAFT`, yet cancel must be refused (BR-03). Kept separate so R1 stays "what state is it" and R3 stays "is it still too late to act". |
+| **R3** | **Check the screening-start guard** `at < starts_at` (BR-01) for the commands that need it: cancel, approve, reject — and, since spec v0.3, confirm (see the note under 3.2). | Independent of R1: a `DRAFT` whose 15-minute hold is still running can belong to a screening that has just started — its effective state is `DRAFT`, yet cancel must be refused (BR-03). Kept separate so R1 stays "what state is it" and R3 stays "is it still too late to act". |
 | **R4** | **Choose the target state and its timestamp**: confirm → `PENDING_APPROVAL` if any seat requires approval, else `CONFIRMED` + `confirmed_at`; approve → `CONFIRMED` + `confirmed_at`; reject → `REJECTED`; cancel → `CANCELLED` + `cancelled_at`. | OP-03 (v0.2 variant), OP-04, OP-05 postconditions. The confirm branch depends on data (`seats.requires_approval`), so it is a real decision, not a constant. |
 | **R5** | **Perform the transition atomically on both tables** inside one write transaction, and refuse to run outside one. | ADR-005: `reservations.state` and `reservation_seats.state` must never differ; C03 A3/A8 showed that a failed statement does not abort the SQLite transaction, so only the transaction's `ROLLBACK` keeps them equal. D2: exactly one place writes state (ADR-008). |
 | **R6** | **Turn a BR-02 veto of the database into a conflict**: when `uq_confirmed_seat_per_screening` refuses a transition into `CONFIRMED`, roll the whole transaction back and report `Conflict`. | D1 / BR-02 / ADR-004: two concurrent confirms (or confirm + approve) can both pass R1–R4; only the index decides the loser, and nothing of the losing reservation may stay `CONFIRMED`. One decision point instead of one `except` per command. |
@@ -537,7 +542,7 @@ signatures, so the API and the C02 acceptance tests are not part of this change.
 |---|---|---|---|
 | R1 effective state | `lifecycle.effective_state(facts, at)` — function | reads `ReservationFacts`; owns no state | Pure function of stored state, `hold_until`, `starts_at`, `at`. One function used by reads **and** by every command, so they cannot disagree (ADR-003). |
 | R2 allowed from which state | `lifecycle.TRANSITIONS` — table (constant data) + `lifecycle.plan` | `TRANSITIONS: dict[Command, Rule]`, `Rule = (allowed_from, needs_not_started, target)` | The state machine becomes **data** in one place: a new state or command is one new row, readable next to the C02 state diagram. |
-| R3 screening-start guard | `lifecycle.plan`, driven by `Rule.needs_not_started` | same table | It is a property of the command (cancel, approve, reject), so it sits in the same row as the allowed states. |
+| R3 screening-start guard | `lifecycle.plan`, driven by `Rule.needs_not_started` | same table | It is a property of the command (cancel, approve, reject; confirm since v0.3), so it sits in the same row as the allowed states. |
 | R4 target state + timestamp | `lifecycle.plan` → returns `Transition` | `Transition(target, timestamp_column)` — value object | The only data-dependent branch (confirm + "a seat requires approval") is decided from a fact, not by querying, so it is testable without SQLite. |
 | facts for R1–R4 | `reservations._load_facts(db, reservation_id)` — function | reads `reservations`, `screenings.starts_at`, `seats.requires_approval`; builds `ReservationFacts` (frozen dataclass) | The only place that knows **where** the facts live. Runs inside the write transaction, so the facts the policy judges are the facts that get written over (no read/write gap). |
 | R5 atomic write of both tables | `reservations._change_state` — function (kept from C03) | **owns** `reservations.state`, `confirmed_at` / `cancelled_at`, and `reservation_seats.state` | ADR-005 / ADR-008: exactly one writer; refuses to run outside `write_tx`. |
@@ -561,7 +566,7 @@ application already uses; the policy does not parse them.
 
 | Command | Allowed from (effective state) | Screening must not have started | Target | Timestamp |
 |---|---|---|---|---|
-| confirm | `DRAFT` | no — see note | `PENDING_APPROVAL` if `needs_approval`, else `CONFIRMED` | `confirmed_at` only for `CONFIRMED` |
+| confirm | `DRAFT` | yes *(v0.3; "no" in the C05 DD — see note)* | `PENDING_APPROVAL` if `needs_approval`, else `CONFIRMED` | `confirmed_at` only for `CONFIRMED` |
 | approve | `PENDING_APPROVAL` | yes | `CONFIRMED` | `confirmed_at` |
 | reject | `PENDING_APPROVAL` | yes | `REJECTED` | – |
 | cancel | `DRAFT`, `PENDING_APPROVAL`, `CONFIRMED` | yes | `CANCELLED` | `cancelled_at` |
@@ -575,6 +580,13 @@ by `hold_until > now`; BR-03's "Applies to" line says OP-03 shares the `now < st
 created just before the start can therefore still be confirmed up to 15 minutes after it. The DD follows the
 more specific sources (OP-03, state diagram) and keeps today's behaviour; switching is a one-cell change of
 this table. Recorded as a remaining design risk for the C05 evidence.
+
+*Resolved after C05 (spec v0.3, 2026-10-20).* The risk had a worse case than the note says: on a seat that
+requires approval, confirm after the start answered `200 PENDING_APPROVAL` for a reservation that already
+read `EXPIRED` and occupied nothing, against OP-03's postcondition "its seats stay occupied". We chose
+the start guard (team sign-off of v0.3 in `diagrams.md`): OP-03, BR-01/BR-03 and the state diagram now agree, the cell above is "yes", and the
+decision table below gains row 16. Evidence: `evidence-and-evolution.md`, "Change after C05: Confirm is
+start-guarded (v0.3)".
 
 ### 3.3 Key interface / contract
 
@@ -816,8 +828,8 @@ The same as a decision table — every combination a test can pick from (`starte
 
 | # | Command | Stored state | held | started | needs_approval | Result |
 |---|---|---|---|---|---|---|
-| 1 | confirm | DRAFT | yes | – | no | → `CONFIRMED`, `confirmed_at` |
-| 2 | confirm | DRAFT | yes | – | yes | → `PENDING_APPROVAL` |
+| 1 | confirm | DRAFT | yes | no *(v0.3; was –)* | no | → `CONFIRMED`, `confirmed_at` |
+| 2 | confirm | DRAFT | yes | no *(v0.3; was –)* | yes | → `PENDING_APPROVAL` |
 | 3 | confirm | DRAFT | no | – | – | Refused "…a EXPIRED reservation" |
 | 4 | confirm | PENDING_APPROVAL | – | no | – | Refused "…a PENDING_APPROVAL reservation" |
 | 5 | confirm | PENDING_APPROVAL | – | yes | – | Refused "…a EXPIRED reservation" *(today: names PENDING_APPROVAL)* |
@@ -831,8 +843,9 @@ The same as a decision table — every combination a test can pick from (`starte
 | 13 | cancel | CONFIRMED | – | yes | – | Refused "The screening has already started" |
 | 14 | cancel | DRAFT | no | – | – | Refused "…a EXPIRED reservation" |
 | 15 | cancel | CANCELLED / REJECTED | – | – | – | Refused, names the stored state |
+| 16 | confirm | DRAFT | yes | yes | – | Refused "The screening has already started" *(v0.3)* |
 
-Row 12 is the case that justifies R3 being separate from R1. Rows 5 and 9 are where the DD deliberately
+Row 12 is the case that justifies R3 being separate from R1; row 16 is the same case for confirm (v0.3). Rows 5 and 9 are where the DD deliberately
 differs from today's code (today: "Cannot confirm a PENDING_APPROVAL reservation" and "The screening has
 started, the approval has expired"); both still answer `409`, only the reason changes so it names the
 derived state, as OP-03/OP-05 say.
