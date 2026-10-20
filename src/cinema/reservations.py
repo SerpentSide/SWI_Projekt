@@ -175,7 +175,7 @@ def create(db, user_id: int, screening_id: int, seat_ids: list[int], at: str) ->
             "INSERT INTO reservation_seats (reservation_id, seat_id, screening_id, state) VALUES (?, ?, ?, 'DRAFT')",
             [(reservation_id, seat_id, screening_id) for seat_id in sorted(requested)],
         )
-    return {"reservation_id": reservation_id, "hold_until": hold_until}
+    return {"reservation_id": reservation_id, "state": "DRAFT", "hold_until": hold_until}
 
 
 def transition(db, reservation_id: int, command: Command, at: str) -> str:
