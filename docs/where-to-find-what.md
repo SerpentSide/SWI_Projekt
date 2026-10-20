@@ -89,7 +89,7 @@ AS-IS stav před refaktoringem: `docs/architecture-and-decisions.md`, Část A (
 
 | Co | Kde |
 |---|---|
-| celý test suite (86 testů) | `python -m pytest -q` |
+| celý test suite (87 testů) | `python -m pytest -q` |
 | architektonické pravidlo (jen `reservations.py` zapisuje stav) | `tests/test_architecture.py` |
 | C01 spike (persistence / dvojí prodej) | `evidence-and-evolution.md` (C01), `tests/test_double_booking_spike.py` |
 | C02: spec → běžící app, nalezené nesoulady | `evidence-and-evolution.md`, "Evidence C02" |

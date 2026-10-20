@@ -118,7 +118,7 @@ python3 -m venv .venv
 npm --prefix src/frontend ci && npm --prefix src/frontend run dev   # UI on http://localhost:5173
 ```
 
-Expected result: **86 passed** — `test_c02_operations.py` 54, `test_api.py` 7, `test_lifecycle.py` 8,
+Expected result: **87 passed** — `test_c02_operations.py` 54, `test_api.py` 8, `test_lifecycle.py` 8,
 `test_notifications.py` 6, `test_c05_transition.py` 5, `test_architecture.py` 4, `test_double_booking_spike.py` 2. Among them:
 
 ```
@@ -139,7 +139,9 @@ start or tear down — SQLite is a file, created fresh per test by pytest's `tmp
 The API keeps its data in `cinema.sqlite3` in the repository root (override with the
 `CINEMA_DB` environment variable). On first start it creates the schema and loads demo
 data: `seed.sql` plus random screenings and already-reserved seats from `seed.py`
-(from today to the end of next month, so the window moves with the date of seeding). To wipe
+(from today to the end of next month). On every later start, if the latest screening is less
+than a week away, it adds new screenings from the day after it to the end of next month, so an
+old database never runs out of bookable screenings; existing data is kept. To wipe
 it and reseed: `PYTHONPATH=src ./.venv/bin/python -m cinema.main` (needed after a schema
 change, e.g. the `notifications` table — the API only creates the schema in an empty file).
 

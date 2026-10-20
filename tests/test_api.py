@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 import cinema.db
 from cinema.availability import has_isolated_free_seat
-from cinema.db import connect, reset_db
+from cinema.db import connect, reset_db, top_up_screenings
 from cinema.main import app
 
 def no_approval_seats() -> None:
@@ -138,3 +138,25 @@ def test_seed_text_is_read_as_utf8(client):
     assert any("pádu Tróje se král" in m["description"] for m in movies)
     for movie in movies:
         assert not any(bad in movie["title"] + movie["description"] for bad in ("Ă", "Ĺ", "Ä"))
+
+
+def test_stale_demo_database_gets_new_screenings_and_keeps_its_data(client):
+    """An old cinema.sqlite3 must not end up with only past screenings (the API never reseeds it)."""
+    assert top_up_screenings() == 0  # a fresh schedule needs nothing
+    conn = connect()
+    conn.execute(
+        """UPDATE screenings SET starts_at = strftime('%Y-%m-%dT%H:%M:%SZ', starts_at, '-120 days'),
+                                 ends_at   = strftime('%Y-%m-%dT%H:%M:%SZ', ends_at,   '-120 days')"""
+    )
+    before = conn.execute("SELECT count(*) AS n FROM reservations").fetchone()["n"]
+    conn.close()
+
+    assert top_up_screenings() > 0
+
+    conn = connect()
+    now = datetime.now().astimezone()
+    starts = [datetime.fromisoformat(r["starts_at"]) for r in conn.execute("SELECT starts_at FROM screenings")]
+    assert any(start > now for start in starts)
+    assert conn.execute("SELECT count(*) AS n FROM reservations").fetchone()["n"] > before  # old rows kept, new added
+    conn.close()
+    test_seed_has_no_hall_overlaps_or_orphans(client)

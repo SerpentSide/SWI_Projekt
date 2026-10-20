@@ -8,12 +8,13 @@ from __future__ import annotations
 import os
 import sqlite3
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
-from cinema.seed import iso, seed_random
+from cinema.seed import TZ, iso, seed_random
 
 HERE = Path(__file__).resolve().parent
+TOP_UP_AHEAD = timedelta(days=7)  # a demo database with less schedule than this left gets more
 DB_PATH = Path(os.environ.get("CINEMA_DB", HERE.parents[1] / "cinema.sqlite3"))
 
 
@@ -53,5 +54,31 @@ def reset_db(path: Path | None = None) -> None:
         conn.executescript((HERE / "seed.sql").read_text(encoding="utf-8"))
         with write_tx(conn):
             seed_random(conn)
+    finally:
+        conn.close()
+
+
+def top_up_screenings(path: Path | None = None) -> int:
+    """Keep a long-lived demo database usable without wiping it.
+
+    The schedule is generated once, up to the end of the following month, so an old database runs out of
+    future screenings. When the latest one starts less than TOP_UP_AHEAD from now, new screenings are added
+    from the day after it (never earlier than today) to the end of next month. Starting on a day with no
+    existing screenings keeps halls free of overlaps (ADR-004's assumption). Returns how many were added."""
+    conn = connect(path)
+    conn.row_factory = None
+    try:
+        with write_tx(conn):
+            (latest,) = conn.execute("SELECT max(starts_at) FROM screenings").fetchone()
+            if latest is not None and latest > iso(datetime.now(UTC) + TOP_UP_AHEAD):
+                return 0
+            first_day = date.today()
+            if latest is not None:
+                day_after = datetime.fromisoformat(latest.replace("Z", "+00:00")).astimezone(TZ).date() + timedelta(days=1)
+                first_day = max(first_day, day_after)
+            (before,) = conn.execute("SELECT count(*) FROM screenings").fetchone()
+            seed_random(conn, first_day=first_day)
+            (after,) = conn.execute("SELECT count(*) FROM screenings").fetchone()
+        return after - before
     finally:
         conn.close()
