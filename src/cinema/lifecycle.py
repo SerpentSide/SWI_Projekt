@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from cinema.roles import OPERATORS, Role
+
 
 class Command(StrEnum):
     CONFIRM = "confirm"
@@ -41,18 +43,27 @@ class Refused:
 
 
 @dataclass(frozen=True)
+class Forbidden:
+    """The caller's role may not issue this command at all (OP-05 `403`), whatever the reservation's state."""
+
+    reason: str
+
+
+@dataclass(frozen=True)
 class Rule:
     allowed_from: frozenset[str]  # effective states
     needs_not_started: bool  # BR-01: only while at < starts_at
     target: Transition | None  # None: chosen in `plan` (confirm)
+    allowed_roles: frozenset[Role] | None = None  # None: any caller (no owner check yet)
 
 
 # The state machine of docs/diagrams.md section 2, as data. CANCELLED, REJECTED and EXPIRED are in no
 # `allowed_from`: that is what "terminal" (BR-03) means. Every command is start-guarded (spec v0.3; DD 3.2).
+# Only a box office operator decides (OP-05); confirm and cancel are open to the viewer and the box office.
 TRANSITIONS: dict[Command, Rule] = {
     Command.CONFIRM: Rule(frozenset({"DRAFT"}), True, None),
-    Command.APPROVE: Rule(frozenset({"PENDING_APPROVAL"}), True, Transition("CONFIRMED", "confirmed_at")),
-    Command.REJECT: Rule(frozenset({"PENDING_APPROVAL"}), True, Transition("REJECTED", None)),
+    Command.APPROVE: Rule(frozenset({"PENDING_APPROVAL"}), True, Transition("CONFIRMED", "confirmed_at"), OPERATORS),
+    Command.REJECT: Rule(frozenset({"PENDING_APPROVAL"}), True, Transition("REJECTED", None), OPERATORS),
     Command.CANCEL: Rule(
         frozenset({"DRAFT", "PENDING_APPROVAL", "CONFIRMED"}), True, Transition("CANCELLED", "cancelled_at")
     ),
@@ -68,9 +79,12 @@ def effective_state(facts: ReservationFacts, at: str) -> str:
     return facts.stored_state
 
 
-def plan(command: Command, facts: ReservationFacts, at: str) -> Transition | Refused:
-    """R2-R4: allowed from the effective state? screening not started? which target?"""
+def plan(command: Command, facts: ReservationFacts, at: str, role: Role | None) -> Transition | Refused | Forbidden:
+    """Role first (OP-05: `403` before `409`), then R2-R4: allowed from the effective state? screening not
+    started? which target? `role` is the caller's, None for a caller who did not say who they are."""
     rule = TRANSITIONS[command]
+    if rule.allowed_roles is not None and role not in rule.allowed_roles:
+        return Forbidden(f"Only the box office may {command} a reservation")
     state = effective_state(facts, at)
     if state not in rule.allowed_from:
         return Refused(f"Cannot {command} a {state} reservation")

@@ -16,19 +16,21 @@ from contextlib import asynccontextmanager
 from datetime import date as Date, datetime, time, timedelta
 from typing import Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from cinema import availability, notifications, reservations
-from cinema.db import DB_PATH, connect, now, reset_db, write_tx  # noqa: F401  (DB_PATH, reset_db: `python -m cinema.main`)
+from cinema.db import DB_PATH, add_roles, connect, now, reset_db, top_up_screenings, write_tx  # noqa: F401  (DB_PATH, reset_db: `python -m cinema.main`)
+from cinema.roles import Role
 from cinema.seed import TZ, iso
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """Create and seed the database on first start; leave existing data alone."""
+    """Create and seed the database on first start; later, add what an older database lacks: the role
+    column and staff accounts, and screenings when the schedule runs out."""
     conn = connect()
     try:
         exists = conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'movies'").fetchone()
@@ -36,6 +38,9 @@ async def lifespan(_app: FastAPI):
         conn.close()
     if exists is None:
         reset_db()
+    else:
+        add_roles()
+        top_up_screenings()
     yield
 
 
@@ -66,6 +71,28 @@ SCREENING_SQL = """
            s.starts_at, s.ends_at
     FROM screenings s JOIN movies m ON m.id = s.movie_id JOIN halls h ON h.id = s.hall_id
 """
+
+
+def caller(x_user_id: int | None = Header(default=None), db=Depends(get_db)) -> dict | None:
+    """Who is calling: the `X-User-Id` header (the `user_id` from /auth/login), or None when it is absent.
+
+    No token yet - like the login itself, the header is trusted as sent."""
+    if x_user_id is None:
+        return None
+    user = db.execute("SELECT id, email, role FROM users WHERE id = ?", (x_user_id,)).fetchone()
+    if user is None:
+        raise HTTPException(401, "Unknown user in X-User-Id")
+    return user
+
+
+def logged_in(user=Depends(caller)) -> dict:
+    if user is None:
+        raise HTTPException(401, "Log in first: send the X-User-Id header")
+    return user
+
+
+def role_of(user: dict | None) -> Role | None:
+    return None if user is None else Role(user["role"])
 
 
 def get_screening_or_404(db, screening_id: int) -> dict:
@@ -117,8 +144,8 @@ def login(body: LoginIn, db=Depends(get_db)):
     with write_tx(db):
         # OR IGNORE, not ON CONFLICT ... DO NOTHING: that upsert syntax needs SQLite >= 3.24
         db.execute("INSERT OR IGNORE INTO users (email) VALUES (?)", (email,))
-    user = db.execute("SELECT id, email FROM users WHERE email = ?", (email,)).fetchone()
-    return {"user_id": user["id"], "email": user["email"]}
+    user = db.execute("SELECT id, email, role FROM users WHERE email = ?", (email,)).fetchone()
+    return {"user_id": user["id"], "email": user["email"], "role": user["role"]}
 
 
 @app.get("/movies")
@@ -133,10 +160,10 @@ def list_movies(db=Depends(get_db)):
 
 
 @app.post("/movies", status_code=201)
-def add_movie(body: MovieIn, db=Depends(get_db)):
-    """Add a movie to the programme; every user is notified about it.
-
-    Like /decision, who may call this is not checked yet - the application has no roles."""
+def add_movie(body: MovieIn, user=Depends(logged_in), db=Depends(get_db)):
+    """Add a movie to the programme (cinema manager only); every user is notified about it."""
+    if role_of(user) != Role.ADMIN:
+        raise HTTPException(403, "Only the cinema manager may add a movie")
     with write_tx(db):
         movie_id = db.execute(
             """INSERT INTO movies (title, duration_minutes, year, genres, description, poster_url, csfd_url)
@@ -197,8 +224,8 @@ def list_user_reservations(user_id: int, db=Depends(get_db)):
 
 
 @app.post("/reservations/{reservation_id}/confirm")
-def confirm_reservation(reservation_id: int, db=Depends(get_db)):
-    state = reservations.confirm(db, reservation_id, now())
+def confirm_reservation(reservation_id: int, user=Depends(caller), db=Depends(get_db)):
+    state = reservations.confirm(db, reservation_id, now(), role_of(user))
     # OP-03 step 5, after the commit; Reservation Management does not know about notifications.
     notifications.notify("reservation_confirmed" if state == "CONFIRMED" else "reservation_pending_approval",
                          reservation_id)
@@ -206,17 +233,16 @@ def confirm_reservation(reservation_id: int, db=Depends(get_db)):
 
 
 @app.post("/reservations/{reservation_id}/cancel")
-def cancel_reservation(reservation_id: int, db=Depends(get_db)):
+def cancel_reservation(reservation_id: int, user=Depends(caller), db=Depends(get_db)):
     at = now()  # one instant: the transition writes it as cancelled_at (OP-04)
-    return {"reservation_id": reservation_id, "state": reservations.cancel(db, reservation_id, at), "cancelled_at": at}
+    state = reservations.cancel(db, reservation_id, at, role_of(user))
+    return {"reservation_id": reservation_id, "state": state, "cancelled_at": at}
 
 
 @app.post("/reservations/{reservation_id}/decision")
-def decide_reservation(reservation_id: int, body: DecisionIn, db=Depends(get_db)):
-    """v0.2 OP-05: a box office operator approves or rejects a PENDING_APPROVAL reservation.
-
-    Who counts as an operator is not checked yet - the application has no roles."""
-    state = reservations.decide(db, reservation_id, body.decision, now())
+def decide_reservation(reservation_id: int, body: DecisionIn, user=Depends(logged_in), db=Depends(get_db)):
+    """v0.2 OP-05: a box office operator approves or rejects a PENDING_APPROVAL reservation (anyone else: 403)."""
+    state = reservations.decide(db, reservation_id, body.decision, now(), role_of(user))
     notifications.notify("reservation_approved" if state == "CONFIRMED" else "reservation_rejected", reservation_id)
     return {"reservation_id": reservation_id, "state": state}
 

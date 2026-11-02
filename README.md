@@ -61,6 +61,18 @@ Row A, 8 seats.  [X] occupied   [ ] free   [R] being reserved
   [X][X][ ][R][R][R][X][X]   REJECT -- A3 would be orphaned
 ```
 
+**Roles.** Every user has one (`users.role`, `src/cinema/roles.py`); the caller says who they are
+with the `X-User-Id` header (the `user_id` from `/auth/login`). No passwords yet, so the header is
+trusted as sent.
+
+| Role | Who | May |
+|---|---|---|
+| `VIEWER` | the customer; every new login | create, confirm, cancel reservations |
+| `BOX_OFFICE` | the operator who sells tickets (`boxoffice@example.com`) | everything a viewer may, plus approve / reject (OP-05) |
+| `ADMIN` | the cinema manager (`admin@example.com`) | everything the box office may, plus add movies |
+
+Not yet: an owner check (a viewer can still confirm or cancel someone else's reservation).
+
 **Boundary.** `NotificationService` (`src/cinema/notifications.py`) — an interface the
 operations call after their transaction commits. Today's implementation delivers **browser
 notifications**: messages go to a `notifications` table, and the frontend polls for them and
@@ -118,8 +130,8 @@ python3 -m venv .venv
 npm --prefix src/frontend ci && npm --prefix src/frontend run dev   # UI on http://localhost:5173
 ```
 
-Expected result: **86 passed** — `test_c02_operations.py` 54, `test_api.py` 7, `test_lifecycle.py` 8,
-`test_notifications.py` 6, `test_c05_transition.py` 5, `test_architecture.py` 4, `test_double_booking_spike.py` 2. Among them:
+Expected result: **97 passed** — `test_c02_operations.py` 58, `test_api.py` 9, `test_lifecycle.py` 10,
+`test_notifications.py` 7, `test_c05_transition.py` 7, `test_architecture.py` 4, `test_double_booking_spike.py` 2. Among them:
 
 ```
 tests/test_api.py::test_walking_skeleton PASSED
@@ -139,16 +151,29 @@ start or tear down — SQLite is a file, created fresh per test by pytest's `tmp
 The API keeps its data in `cinema.sqlite3` in the repository root (override with the
 `CINEMA_DB` environment variable). On first start it creates the schema and loads demo
 data: `seed.sql` plus random screenings and already-reserved seats from `seed.py`
-(from today to the end of next month, so the window moves with the date of seeding). To wipe
+(from today to the end of next month). On every later start, if the latest screening is less
+than a week away, it adds new screenings from the day after it to the end of next month, so an
+old database never runs out of bookable screenings; existing data is kept. To wipe
 it and reseed: `PYTHONPATH=src ./.venv/bin/python -m cinema.main` (needed after a schema
-change, e.g. the `notifications` table — the API only creates the schema in an empty file).
+change, e.g. the `notifications` table — the API only creates the schema in an empty file; the one
+exception is `users.role`, which it adds to an older database together with the staff accounts).
 
 The frontend calls the API through Vite's dev proxy (`/api` → `localhost:8000`), so start
 the backend first.
 
+**Demo accounts** (from `seed.sql`). Passwords are not checked, so type anything. Any other
+e-mail creates a new `VIEWER` on first login.
+
+| E-mail | Role | Use it to |
+|---|---|---|
+| `demo@example.com` | `VIEWER` | reserve as a customer with a clean account (no seeded reservations) |
+| `viewer1@example.com` … `viewer5@example.com` | `VIEWER` | customers who own the randomly seeded `CONFIRMED` reservations |
+| `boxoffice@example.com` | `BOX_OFFICE` | approve or reject a VIP-row (`J`) reservation |
+| `admin@example.com` | `ADMIN` | add a movie (`POST /movies`), and anything the box office does |
+
 | Endpoint | |
 |---|---|
-| `POST /auth/login` `{email}` | returns `user_id` (user created on first login, no password yet) |
+| `POST /auth/login` `{email}` | returns `user_id` and `role` (user created on first login as `VIEWER`, no password yet) |
 | `GET /movies` | all movies |
 | `GET /screenings?movie_id=&date=` | screenings, optionally filtered |
 | `GET /screenings/{id}` | one screening |
@@ -158,8 +183,8 @@ the backend first.
 | `GET /users/{id}/reservations` | a user's reservations |
 | `POST /reservations/{id}/confirm` | DRAFT → CONFIRMED, or DRAFT → PENDING_APPROVAL if a seat needs approval (409 if expired, seat taken or the screening has started) |
 | `POST /reservations/{id}/cancel` | → CANCELLED, returns `cancelled_at` (until the screening starts) |
-| `POST /reservations/{id}/decision` `{decision: approve\|reject}` | box office: PENDING_APPROVAL → CONFIRMED / REJECTED |
-| `POST /movies` `{title, duration_minutes, …}` | add a movie; notifies every user |
+| `POST /reservations/{id}/decision` `{decision: approve\|reject}` | `BOX_OFFICE` / `ADMIN`: PENDING_APPROVAL → CONFIRMED / REJECTED · 401 no `X-User-Id` · 403 other role |
+| `POST /movies` `{title, duration_minutes, …}` | `ADMIN`: add a movie; notifies every user · 401 · 403 |
 | `POST /users/{id}/notifications/deliver` | the browser's poll: undelivered notifications, marked delivered |
 | `GET /health` | liveness check |
 
@@ -190,7 +215,8 @@ src/
     seed.py                          random screenings + already-reserved seats
     main.py                          the FastAPI app: routes, validation, error -> status code (HTTP layer)
     reservations.py                  Reservation Management: the only code that changes Reservation state (ADR-008)
-    lifecycle.py                     C05: pure lifecycle policy -- allowed transitions, derived EXPIRED
+    lifecycle.py                     C05: pure lifecycle policy -- allowed transitions (and by which role), derived EXPIRED
+    roles.py                         user roles: VIEWER, BOX_OFFICE, ADMIN
     availability.py                  definition of "occupied", no-orphan rule
     db.py                            connection, write transaction, schema + seed loading
     notifications.py                 NotificationService interface + browser implementation, notify()

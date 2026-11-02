@@ -16,7 +16,9 @@ DROP TABLE IF EXISTS users;
 
 CREATE TABLE users (
     id    INTEGER PRIMARY KEY,
-    email TEXT NOT NULL UNIQUE
+    email TEXT NOT NULL UNIQUE,
+    -- cinema.roles.Role. A new login is a VIEWER; staff accounts come from seed.sql.
+    role  TEXT NOT NULL DEFAULT 'VIEWER' CHECK (role IN ('VIEWER', 'BOX_OFFICE', 'ADMIN'))
 );
 
 CREATE TABLE movies (

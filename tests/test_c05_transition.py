@@ -13,7 +13,8 @@ import pytest
 import cinema.db
 from cinema import reservations
 from cinema.lifecycle import Command
-from cinema.reservations import Conflict, NotFound
+from cinema.reservations import Conflict, NotAllowed, NotFound
+from cinema.roles import Role
 
 STARTS_AT = "2030-01-01T18:00:00Z"
 BEFORE_START = "2030-01-01T17:00:00Z"
@@ -66,7 +67,7 @@ def stored(db, rid):
 def test_approve_writes_both_tables_and_commits(db):
     rid = plant(db, screening(db), seats(db), "PENDING_APPROVAL")
 
-    assert reservations.transition(db, rid, Command.APPROVE, BEFORE_START) == "CONFIRMED"
+    assert reservations.transition(db, rid, Command.APPROVE, BEFORE_START, Role.BOX_OFFICE) == "CONFIRMED"
 
     other = cinema.db.connect()  # a second connection only sees committed data
     try:
@@ -83,7 +84,7 @@ def test_approve_that_loses_br02_changes_nothing(db):
     rid = plant(db, sc, [seat_x, seat_y], "PENDING_APPROVAL")
 
     with pytest.raises(Conflict, match="just confirmed by someone else"):
-        reservations.transition(db, rid, Command.APPROVE, BEFORE_START)
+        reservations.transition(db, rid, Command.APPROVE, BEFORE_START, Role.BOX_OFFICE)
 
     assert stored(db, rid) == ("PENDING_APPROVAL", None, None, ["PENDING_APPROVAL", "PENDING_APPROVAL"])
     assert not db.in_transaction
@@ -99,6 +100,18 @@ def test_refused_command_leaves_the_reservation_untouched(db):
         reservations.transition(db, rid, Command.CANCEL, BEFORE_START)
 
     assert stored(db, rid) == before
+    assert not db.in_transaction
+
+
+# C3b - a role refusal (OP-05 `403`) writes nothing either
+@pytest.mark.parametrize("role", [Role.VIEWER, None])
+def test_a_decision_by_a_non_operator_leaves_the_reservation_untouched(db, role):
+    rid = plant(db, screening(db), seats(db), "PENDING_APPROVAL")
+
+    with pytest.raises(NotAllowed):
+        reservations.decide(db, rid, "approve", BEFORE_START, role)
+
+    assert stored(db, rid) == ("PENDING_APPROVAL", None, None, ["PENDING_APPROVAL", "PENDING_APPROVAL"])
     assert not db.in_transaction
 
 

@@ -3,6 +3,7 @@ import { Outlet } from 'react-router-dom'
 import { NotificationToggle } from '@/components/notifications/notification-toggle'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { Button } from '@/components/ui/button'
+import { ROLE_LABELS } from '@/lib/api'
 import { useAuth } from '@/providers/auth-provider'
 
 /**
@@ -10,13 +11,18 @@ import { useAuth } from '@/providers/auth-provider'
  * bell, theme toggle and logout, then the routed page content below.
  */
 export function AppShell() {
-  const { logout } = useAuth()
+  const { logout, user } = useAuth()
 
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
       <header className="flex shrink-0 items-center justify-between border-b border-border px-6 py-4">
         <span className="text-lg font-semibold text-brand">Cinema Reservations</span>
         <div className="flex items-center gap-2">
+          {user && (
+            <span className="text-sm text-muted-foreground" title={user.email}>
+              {ROLE_LABELS[user.role]}
+            </span>
+          )}
           <NotificationToggle />
           <ThemeToggle />
           <Button variant="ghost" size="sm" onClick={logout}>

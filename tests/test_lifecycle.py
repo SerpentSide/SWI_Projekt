@@ -11,13 +11,16 @@ import itertools
 
 import pytest
 
-from cinema.lifecycle import Command, Refused, ReservationFacts, Transition, effective_state, plan
+from cinema.lifecycle import Command, Forbidden, Refused, ReservationFacts, Transition, effective_state, plan
+from cinema.roles import Role
 
 AT = "2030-01-01T17:00:00Z"
 EARLIER = "2030-01-01T16:00:00Z"
 LATER = "2030-01-01T18:00:00Z"
 
 STORED_STATES = ["DRAFT", "PENDING_APPROVAL", "CONFIRMED", "CANCELLED", "REJECTED"]
+ROLES = [None, *Role]  # None: a caller who did not say who they are
+OPERATOR = Role.BOX_OFFICE
 
 
 def facts(state="DRAFT", held=True, started=False, needs_approval=False) -> ReservationFacts:
@@ -27,6 +30,11 @@ def facts(state="DRAFT", held=True, started=False, needs_approval=False) -> Rese
         starts_at=EARLIER if started else LATER,
         needs_approval=needs_approval,
     )
+
+
+def may_issue(command, role) -> bool:
+    """docs/diagrams.md section 1: only the box office operator decides (OP-05); the cinema manager may too."""
+    return command not in (Command.APPROVE, Command.REJECT) or role in (Role.BOX_OFFICE, Role.ADMIN)
 
 
 def diagram_edge(command, state, held, started, needs_approval) -> Transition | None:
@@ -44,15 +52,17 @@ def diagram_edge(command, state, held, started, needs_approval) -> Transition | 
     return None
 
 
-# U1 - interface contract of plan; TRANSITIONS equals the state diagram
+# U1 - interface contract of plan; TRANSITIONS equals the state diagram and the use cases' actors
 def test_plan_allows_exactly_the_edges_of_the_state_diagram():
-    combinations = list(itertools.product(Command, STORED_STATES, [True, False], [True, False], [True, False]))
-    assert len(combinations) == 160
-    for command, state, held, started, needs_approval in combinations:
-        result = plan(command, facts(state, held, started, needs_approval), AT)  # must not raise
+    combinations = list(itertools.product(Command, STORED_STATES, [True, False], [True, False], [True, False], ROLES))
+    assert len(combinations) == 640
+    for command, state, held, started, needs_approval, role in combinations:
+        result = plan(command, facts(state, held, started, needs_approval), AT, role)  # must not raise
         expected = diagram_edge(command, state, held, started, needs_approval)
-        case = (command, state, held, started, needs_approval)
-        if expected is None:
+        case = (command, state, held, started, needs_approval, role)
+        if not may_issue(command, role):
+            assert isinstance(result, Forbidden), case
+        elif expected is None:
             assert isinstance(result, Refused), case
         else:
             assert result == expected, case
@@ -61,8 +71,8 @@ def test_plan_allows_exactly_the_edges_of_the_state_diagram():
 
 # U2 - algorithm branch R4 (decision-table rows 1 and 2)
 def test_confirm_chooses_pending_approval_only_when_a_seat_needs_it():
-    assert plan(Command.CONFIRM, facts(needs_approval=True), AT) == Transition("PENDING_APPROVAL", None)
-    assert plan(Command.CONFIRM, facts(needs_approval=False), AT) == Transition("CONFIRMED", "confirmed_at")
+    assert plan(Command.CONFIRM, facts(needs_approval=True), AT, Role.VIEWER) == Transition("PENDING_APPROVAL", None)
+    assert plan(Command.CONFIRM, facts(needs_approval=False), AT, Role.VIEWER) == Transition("CONFIRMED", "confirmed_at")
 
 
 # U3 - R1 effective state, half-open boundaries of BR-01
@@ -80,18 +90,25 @@ def test_effective_state_boundaries_are_half_open():
 def test_cancel_of_a_live_draft_after_the_start_is_refused_by_the_start_guard():
     live_draft_started = facts("DRAFT", held=True, started=True)
     assert effective_state(live_draft_started, AT) == "DRAFT"
-    assert plan(Command.CANCEL, live_draft_started, AT) == Refused("The screening has already started")
+    assert plan(Command.CANCEL, live_draft_started, AT, Role.VIEWER) == Refused("The screening has already started")
 
 
 # U5 - failure behaviour: the reason names the derived state (decision-table rows 5 and 9)
 @pytest.mark.parametrize("command", [Command.CONFIRM, Command.APPROVE, Command.REJECT])
 def test_refusal_names_the_derived_state(command):
     expired_pending = facts("PENDING_APPROVAL", started=True)
-    assert plan(command, expired_pending, AT) == Refused(f"Cannot {command} a EXPIRED reservation")
+    assert plan(command, expired_pending, AT, OPERATOR) == Refused(f"Cannot {command} a EXPIRED reservation")
 
 
 # U6 - R3 also guards confirm (decision-table row 16, spec v0.3)
 def test_confirm_of_a_live_draft_after_the_start_is_refused_by_the_start_guard():
     live_draft_started = facts("DRAFT", held=True, started=True, needs_approval=True)
     assert effective_state(live_draft_started, AT) == "DRAFT"
-    assert plan(Command.CONFIRM, live_draft_started, AT) == Refused("The screening has already started")
+    assert plan(Command.CONFIRM, live_draft_started, AT, Role.VIEWER) == Refused("The screening has already started")
+
+
+# U7 - the role is checked first: a viewer gets Forbidden even where the state would refuse (OP-05 403 before 409)
+@pytest.mark.parametrize("command", [Command.APPROVE, Command.REJECT])
+def test_role_refusal_comes_before_the_state_refusal(command):
+    assert isinstance(plan(command, facts("CANCELLED"), AT, Role.VIEWER), Forbidden)
+    assert isinstance(plan(command, facts("CANCELLED"), AT, OPERATOR), Refused)

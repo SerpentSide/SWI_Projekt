@@ -33,11 +33,12 @@ def iso(dt: datetime) -> str:
     return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def seed_random(conn: sqlite3.Connection, rng: random.Random | None = None) -> None:
+def seed_random(conn: sqlite3.Connection, rng: random.Random | None = None, first_day: date | None = None) -> None:
+    """Screenings from `first_day` (default: today) to the end of next month, with reservations."""
     rng = rng or random.Random()
     movies = conn.execute("SELECT id, duration_minutes FROM movies").fetchall()
     halls = [row[0] for row in conn.execute("SELECT id FROM halls ORDER BY id")]
-    users = [row[0] for row in conn.execute("SELECT id FROM users WHERE email <> 'demo@example.com'")]
+    users = [row[0] for row in conn.execute("SELECT id FROM users WHERE role = 'VIEWER' AND email <> 'demo@example.com'")]
     now = iso(datetime.now(UTC))
 
     # 1. A weekly schedule per movie: 2-4 weekdays, 1-3 showtimes.
@@ -52,9 +53,9 @@ def seed_random(conn: sqlite3.Connection, rng: random.Random | None = None) -> N
 
     # 2. Expand it from today to the end of next month and pack each day into halls.
     screenings = []  # (movie_id, hall_id, starts_at, ends_at)
-    today = date.today()
-    for offset in range((last_day_of_next_month(today) - today).days + 1):
-        day = today + timedelta(days=offset)
+    first_day = first_day or date.today()
+    for offset in range((last_day_of_next_month(date.today()) - first_day).days + 1):
+        day = first_day + timedelta(days=offset)
         wanted = [
             (datetime.combine(day, t, TZ), movie_id, duration)
             for movie_id, (weekdays, times, duration) in schedule.items()

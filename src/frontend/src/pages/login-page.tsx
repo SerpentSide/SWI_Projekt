@@ -92,6 +92,7 @@ export function LoginPage() {
 
         <p className="text-center text-xs text-muted-foreground">
           Hesla se zatím neověřují — stačí e-mail, účet se vytvoří při prvním přihlášení.
+          Pokladna: boxoffice@example.com, správce kina: admin@example.com.
         </p>
       </form>
     </div>

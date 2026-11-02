@@ -2,9 +2,19 @@
 // http://localhost:8000 (see vite.config.ts), so no CORS setup is needed here.
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api'
 
+/** cinema.roles.Role: customer, the box office operator who sells tickets, the cinema manager. */
+export type Role = 'VIEWER' | 'BOX_OFFICE' | 'ADMIN'
+
+export const ROLE_LABELS: Record<Role, string> = {
+  VIEWER: 'Divák',
+  BOX_OFFICE: 'Pokladna',
+  ADMIN: 'Správce kina',
+}
+
 export interface User {
   user_id: number
   email: string
+  role: Role
 }
 
 export interface Movie {
@@ -63,10 +73,21 @@ export class ApiError extends Error {
   }
 }
 
+// Who is calling, sent as X-User-Id; the backend reads the role from it. Set by the AuthProvider.
+let callerId: number | null = null
+
+export function setCaller(userId: number | null) {
+  callerId = userId
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, {
     ...init,
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(callerId === null ? {} : { 'X-User-Id': String(callerId) }),
+      ...init?.headers,
+    },
   })
   if (!response.ok) {
     const body = await response.json().catch(() => null)

@@ -9,6 +9,11 @@ INSERT INTO users (email) VALUES
     ('viewer4@example.com'),
     ('viewer5@example.com');
 
+-- Staff (cinema.roles). Keep in step with db.STAFF, which adds them to an older database.
+INSERT INTO users (email, role) VALUES
+    ('boxoffice@example.com', 'BOX_OFFICE'),
+    ('admin@example.com', 'ADMIN');
+
 -- Facts (year, runtime, genres) and posters from ČSFD; descriptions are our own.
 INSERT INTO movies (title, duration_minutes, year, genres, description, poster_url, csfd_url) VALUES
     ('Odyssea', 172, 2026,

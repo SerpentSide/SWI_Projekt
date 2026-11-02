@@ -19,7 +19,8 @@ from typing import Literal
 from cinema import lifecycle
 from cinema.availability import occupied_seat_ids, orphaned_row
 from cinema.db import write_tx
-from cinema.lifecycle import Command, Refused, ReservationFacts, Transition
+from cinema.lifecycle import Command, Forbidden, Refused, ReservationFacts, Transition
+from cinema.roles import Role
 from cinema.seed import iso
 
 HOLD = timedelta(minutes=15)
@@ -31,6 +32,10 @@ class ReservationError(Exception):
     def __init__(self, detail: str):
         super().__init__(detail)
         self.detail = detail
+
+
+class NotAllowed(ReservationError):
+    status_code = 403
 
 
 class NotFound(ReservationError):
@@ -178,31 +183,32 @@ def create(db, user_id: int, screening_id: int, seat_ids: list[int], at: str) ->
     return {"reservation_id": reservation_id, "state": "DRAFT", "hold_until": hold_until}
 
 
-def transition(db, reservation_id: int, command: Command, at: str) -> str:
+def transition(db, reservation_id: int, command: Command, at: str, role: Role | None = None) -> str:
     """The one command path for an existing Reservation (C05 DD 3.3). Returns the new stored state.
 
-    `_guard_br02` sits outside `write_tx`, so the rollback has run before a `Conflict` leaves (DD 4.3)."""
+    `role` is the caller's (None: not identified). `_guard_br02` sits outside `write_tx`, so the rollback
+    has run before a `Conflict` leaves (DD 4.3)."""
     with _guard_br02():
         with write_tx(db):
-            decision = lifecycle.plan(command, _load_facts(db, reservation_id), at)
+            decision = lifecycle.plan(command, _load_facts(db, reservation_id), at, role)
+            if isinstance(decision, Forbidden):
+                raise NotAllowed(decision.reason)
             if isinstance(decision, Refused):
                 raise Conflict(decision.reason)
             _change_state(db, reservation_id, decision, at)
     return decision.target
 
 
-def confirm(db, reservation_id: int, at: str) -> str:
+def confirm(db, reservation_id: int, at: str, role: Role | None = None) -> str:
     """OP-03: DRAFT -> CONFIRMED, or -> PENDING_APPROVAL when a seat needs approval."""
-    return transition(db, reservation_id, Command.CONFIRM, at)
+    return transition(db, reservation_id, Command.CONFIRM, at, role)
 
 
-def cancel(db, reservation_id: int, at: str) -> str:
+def cancel(db, reservation_id: int, at: str, role: Role | None = None) -> str:
     """OP-04: DRAFT / PENDING_APPROVAL / CONFIRMED -> CANCELLED, before the screening starts."""
-    return transition(db, reservation_id, Command.CANCEL, at)
+    return transition(db, reservation_id, Command.CANCEL, at, role)
 
 
-def decide(db, reservation_id: int, decision: Literal["approve", "reject"], at: str) -> str:
-    """OP-05: a box office operator approves or rejects a PENDING_APPROVAL reservation.
-
-    Who counts as an operator is not checked yet - the application has no roles."""
-    return transition(db, reservation_id, Command(decision), at)
+def decide(db, reservation_id: int, decision: Literal["approve", "reject"], at: str, role: Role | None) -> str:
+    """OP-05: a box office operator approves or rejects a PENDING_APPROVAL reservation; anyone else -> `NotAllowed`."""
+    return transition(db, reservation_id, Command(decision), at, role)

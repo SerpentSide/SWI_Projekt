@@ -290,8 +290,8 @@ is **not specified** — see the Assumption below.
 ### Assumption / unknown / TBD
 - *(v0.2)* **Who is told that a reservation is waiting for a decision.** The viewer is
   notified (`NotificationService.reservation_pending_approval`, Variant step 5). The box office
-  is not: there is no operator role to address (see OP-05), so an operator has to look, not be
-  told. Left undecided on purpose.
+  is not: an operator has to look, not be told. Left undecided on purpose. (Since roles exist,
+  the `BOX_OFFICE` users could be addressed; doing so is a change to this slice, not a fix.)
 - **Confirming an already-`CONFIRMED` reservation.** Not stated anywhere in C01. We chose
   `409` (confirm is not idempotent in this baseline) over silently returning
   `200` again, because a caller receiving `200` twice for two different physical clicks
@@ -446,9 +446,12 @@ Expiry is tied to the screening's start (`starts_at`) so no timeout value has to
 invented.
 
 ### Assumption / unknown / TBD
-- **How a caller is recognised as a box office operator.** The baseline application has no
-  roles at all — anyone can act as any user. This slice specifies the observable outcome
-  (`403`) but not the mechanism; it is the first thing C03 must decide.
+- **How a caller is recognised as a box office operator.** Decided: every user has a role
+  (`users.role`: `VIEWER`, `BOX_OFFICE`, `ADMIN` — `src/cinema/roles.py`); the caller sends
+  their `user_id` in the `X-User-Id` header. No header → `401`; a role other than `BOX_OFFICE`
+  or `ADMIN` → `403`, checked in `lifecycle.plan` before the state, so `403` wins over `409`.
+  Still open: login is by e-mail only, so the header is trusted as sent — anyone who logs in
+  with a staff e-mail is staff.
 - **Deciding twice** is `409`, not idempotent — the same reasoning as double-confirm in OP-03.
 
 ---

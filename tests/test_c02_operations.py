@@ -70,6 +70,16 @@ def login(client, email="viewer@example.com") -> int:
     return client.post("/auth/login", json={"email": email}).json()["user_id"]
 
 
+def as_user(user_id) -> dict:
+    """Request headers that say who is calling (cinema.main.caller)."""
+    return {"X-User-Id": str(user_id)}
+
+
+def box_office(client) -> int:
+    """The seeded box office operator (seed.sql)."""
+    return login(client, "boxoffice@example.com")
+
+
 def create(client, user_id, screening_id, seat_ids):
     return client.post("/reservations", json={
         "user_id": user_id, "screening_id": screening_id, "seat_ids": seat_ids})
@@ -404,8 +414,10 @@ def require_approval(seat_ids) -> None:
         conn.close()
 
 
-def decide(client, reservation_id, decision):
-    return client.post(f"/reservations/{reservation_id}/decision", json={"decision": decision})
+def decide(client, reservation_id, decision, by=None):
+    """OP-05 as the box office operator, unless `by` (a user id) says otherwise."""
+    by = box_office(client) if by is None else by
+    return client.post(f"/reservations/{reservation_id}/decision", json={"decision": decision}, headers=as_user(by))
 
 
 def pending(client, hours_ahead=3, row=0):
@@ -504,6 +516,33 @@ class TestApprove:
 
     def test_unknown_reservation_is_404(self, client):
         assert decide(client, 99999, "approve").status_code == 404
+
+    def test_a_viewer_cannot_decide_403(self, client):
+        """Spec OP-05: a caller who is not a box office operator -> 403; state unchanged."""
+        rid, screening, seats = pending(client)
+        viewer = login(client)  # the very viewer who made the reservation
+        for decision in ("approve", "reject"):
+            resp = decide(client, rid, decision, by=viewer)
+            assert resp.status_code == 403, decision
+        assert stored(rid) == ("PENDING_APPROVAL", ["PENDING_APPROVAL", "PENDING_APPROVAL"])
+        assert occupied_ids(client, screening) == set(seats)
+
+    def test_a_viewer_is_refused_before_the_state_is_checked(self, client):
+        """403 comes before 409: a viewer learns nothing about the reservation's state."""
+        user, screening = login(client), make_screening(timedelta(hours=3))
+        rid = create(client, user, screening, row_seats()[:2]).json()["reservation_id"]
+        assert decide(client, rid, "approve", by=user).status_code == 403
+
+    def test_a_decision_without_a_caller_is_401(self, client):
+        rid, *_ = pending(client)
+        assert client.post(f"/reservations/{rid}/decision", json={"decision": "approve"}).status_code == 401
+        assert decide(client, rid, "approve", by=99999).status_code == 401  # no such user
+        assert stored(rid)[0] == "PENDING_APPROVAL"
+
+    def test_the_cinema_manager_may_decide_too(self, client):
+        rid, *_ = pending(client)
+        admin = login(client, "admin@example.com")
+        assert decide(client, rid, "approve", by=admin).json()["state"] == "CONFIRMED"
 
     def test_decision_must_be_approve_or_reject(self, client):
         rid, *_ = pending(client)
