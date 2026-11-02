@@ -42,7 +42,7 @@ Definice: `docs/c03-architecture.md`, sekce B.
 | D3 | `PENDING_APPROVAL` přežije request | stav v DB; `reservations.decide`, `needs_approval`, `effective_state` | `TestConfirmNeedingApproval`, `TestApprove` |
 | D4 | selhání notifikace nesmí změnit výsledek | `notifications.notify` polyká chyby, volá se z API po commitu | `test_notifications.py::test_failed_notification_never_fails_the_reservation` |
 
-Známé mezery (zapsané, neřešené): chybí role/autorizace (`/decision` může volat kdokoli, `403` z OP-05 není), ztracená notifikace při pádu mezi `COMMIT` a `notify`.
+Známé mezery (zapsané, neřešené): role existují (`roles.py`, hlavička `X-User-Id`, `403` z OP-05 v `lifecycle.plan`), ale bez hesel a bez kontroly vlastníka (divák může potvrdit/zrušit cizí rezervaci); ztracená notifikace při pádu mezi `COMMIT` a `notify`.
 
 ## 4. Operace / use-casy → endpoint → kód → testy
 
@@ -89,7 +89,7 @@ AS-IS stav před refaktoringem: `docs/architecture-and-decisions.md`, Část A (
 
 | Co | Kde |
 |---|---|
-| celý test suite (87 testů) | `python -m pytest -q` |
+| celý test suite (97 testů) | `python -m pytest -q` |
 | architektonické pravidlo (jen `reservations.py` zapisuje stav) | `tests/test_architecture.py` |
 | C01 spike (persistence / dvojí prodej) | `evidence-and-evolution.md` (C01), `tests/test_double_booking_spike.py` |
 | C02: spec → běžící app, nalezené nesoulady | `evidence-and-evolution.md`, "Evidence C02" |

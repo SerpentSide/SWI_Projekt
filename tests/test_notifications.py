@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 import cinema.notifications
-from test_c02_operations import client, create, decide, login, make_screening, pending, row_seats  # noqa: F401
+from test_c02_operations import as_user, client, create, decide, login, make_screening, pending, row_seats  # noqa: F401
 
 
 def deliver(client, user_id):
@@ -56,12 +56,22 @@ def test_rejection_is_notified(client):
 
 def test_new_movie_notifies_every_user(client):
     a, b = login(client, "a@example.com"), login(client, "b@example.com")
-    resp = client.post("/movies", json={"title": "Nový film", "duration_minutes": 100, "genres": ["Drama"]})
+    admin = login(client, "admin@example.com")
+    resp = client.post("/movies", json={"title": "Nový film", "duration_minutes": 100, "genres": ["Drama"]},
+                       headers=as_user(admin))
     assert resp.status_code == 201
     assert any(m["title"] == "Nový film" and m["genres"] == ["Drama"] for m in client.get("/movies").json())
     for user in (a, b):
         [n] = deliver(client, user)
         assert n["kind"] == "NEW_MOVIE" and "Nový film" in n["body"]
+
+
+def test_only_the_cinema_manager_adds_movies(client):
+    movie = {"title": "Nový film", "duration_minutes": 100}
+    assert client.post("/movies", json=movie).status_code == 401
+    for email in ("viewer@example.com", "boxoffice@example.com"):
+        assert client.post("/movies", json=movie, headers=as_user(login(client, email))).status_code == 403, email
+    assert not any(m["title"] == "Nový film" for m in client.get("/movies").json())
 
 
 def test_failed_notification_never_fails_the_reservation(client, monkeypatch):

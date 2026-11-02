@@ -1,6 +1,6 @@
 import * as React from 'react'
 
-import { api, type User } from '@/lib/api'
+import { api, setCaller, type User } from '@/lib/api'
 
 const STORAGE_KEY = 'cinema.auth.user'
 
@@ -17,7 +17,9 @@ const AuthContext = React.createContext<AuthContextValue | undefined>(undefined)
 function readStoredUser(): User | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? (JSON.parse(raw) as User) : null
+    const user = raw ? (JSON.parse(raw) as User) : null
+    // Stored before roles existed: log in again to learn the role.
+    return user?.role ? user : null
   } catch {
     return null
   }
@@ -25,6 +27,9 @@ function readStoredUser(): User | null {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = React.useState<User | null>(readStoredUser)
+
+  // Before any child effect runs, so the first API call already says who is calling.
+  setCaller(user?.user_id ?? null)
 
   const login = React.useCallback(async (email: string, _password: string) => {
     const loggedIn = await api.login(email)

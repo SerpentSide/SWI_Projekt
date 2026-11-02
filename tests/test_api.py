@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 import cinema.db
 from cinema.availability import has_isolated_free_seat
-from cinema.db import connect, reset_db, top_up_screenings
+from cinema.db import add_roles, connect, reset_db, top_up_screenings
 from cinema.main import app
 
 def no_approval_seats() -> None:
@@ -160,3 +160,19 @@ def test_stale_demo_database_gets_new_screenings_and_keeps_its_data(client):
     assert conn.execute("SELECT count(*) AS n FROM reservations").fetchone()["n"] > before  # old rows kept, new added
     conn.close()
     test_seed_has_no_hall_overlaps_or_orphans(client)
+
+
+def test_database_from_before_roles_gets_the_role_column_and_staff(client):
+    """An old cinema.sqlite3 has users without `role`; the API adds it on start instead of failing every login."""
+    conn = connect()
+    conn.execute("ALTER TABLE users DROP COLUMN role")
+    conn.execute("DELETE FROM users WHERE email = 'admin@example.com'")
+    conn.close()
+
+    assert add_roles() is True
+    assert add_roles() is False  # already done
+
+    roles = {u: client.post("/auth/login", json={"email": u}).json()["role"]
+             for u in ("viewer1@example.com", "boxoffice@example.com", "admin@example.com", "new@example.com")}
+    assert roles == {"viewer1@example.com": "VIEWER", "boxoffice@example.com": "BOX_OFFICE",
+                     "admin@example.com": "ADMIN", "new@example.com": "VIEWER"}

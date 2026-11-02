@@ -222,7 +222,7 @@ flowchart TD
 ## 4. Consistency check
 
 Each edge of the state diagram, traced to the text and to an executed test
-(`tests/test_c02_operations.py`). Rows for v0.2 are run too, except the `403` row, which needs roles (C03).
+(`tests/test_c02_operations.py`). Rows for v0.2 are run too, including the `403` row since roles exist (`src/cinema/roles.py`).
 
 | Transition / rule | Spec | Test |
 |---|---|---|
@@ -246,4 +246,4 @@ Each edge of the state diagram, traced to the text and to an executed test
 | `PENDING_APPROVAL → CANCELLED` *(v0.2)* | OP-04 | `TestCancelPending::test_pending_can_be_cancelled_and_seats_are_free_again` |
 | `PENDING_APPROVAL → EXPIRED` at `starts_at` *(v0.2)* | OP-05 | `TestApprove::test_approval_after_the_screening_started_is_409_and_reads_expired`, `TestConfirmNeedingApproval::test_pending_reservation_of_a_started_screening_reads_as_expired_and_is_free` |
 | approve versus cancel race: always ends `CANCELLED` *(v0.2)* | OP-05 | `TestApprove::test_approve_and_cancel_arriving_together_always_end_cancelled` |
-| non-operator decision → `403` *(v0.2)* | OP-05 | *deferred to C03 — the application has no roles yet* |
+| non-operator decision → `403` *(v0.2)* | OP-05 | `TestApprove::test_a_viewer_cannot_decide_403`, `::test_a_viewer_is_refused_before_the_state_is_checked`, `::test_a_decision_without_a_caller_is_401` |

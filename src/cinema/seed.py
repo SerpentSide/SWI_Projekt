@@ -38,7 +38,7 @@ def seed_random(conn: sqlite3.Connection, rng: random.Random | None = None, firs
     rng = rng or random.Random()
     movies = conn.execute("SELECT id, duration_minutes FROM movies").fetchall()
     halls = [row[0] for row in conn.execute("SELECT id FROM halls ORDER BY id")]
-    users = [row[0] for row in conn.execute("SELECT id FROM users WHERE email <> 'demo@example.com'")]
+    users = [row[0] for row in conn.execute("SELECT id FROM users WHERE role = 'VIEWER' AND email <> 'demo@example.com'")]
     now = iso(datetime.now(UTC))
 
     # 1. A weekly schedule per movie: 2-4 weekdays, 1-3 showtimes.

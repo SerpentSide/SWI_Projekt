@@ -15,6 +15,7 @@ from cinema.seed import TZ, iso, seed_random
 
 HERE = Path(__file__).resolve().parent
 TOP_UP_AHEAD = timedelta(days=7)  # a demo database with less schedule than this left gets more
+STAFF = {"boxoffice@example.com": "BOX_OFFICE", "admin@example.com": "ADMIN"}  # as in seed.sql
 DB_PATH = Path(os.environ.get("CINEMA_DB", HERE.parents[1] / "cinema.sqlite3"))
 
 
@@ -54,6 +55,26 @@ def reset_db(path: Path | None = None) -> None:
         conn.executescript((HERE / "seed.sql").read_text(encoding="utf-8"))
         with write_tx(conn):
             seed_random(conn)
+    finally:
+        conn.close()
+
+
+def add_roles(path: Path | None = None) -> bool:
+    """Bring a database created before roles existed up to date: the `users.role` column and the staff
+    accounts of seed.sql (an existing user with a staff e-mail gets the staff role). Returns whether it did."""
+    conn = connect(path)
+    try:
+        if any(col["name"] == "role" for col in conn.execute("PRAGMA table_info(users)")):
+            return False
+        with write_tx(conn):
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'VIEWER'"
+                " CHECK (role IN ('VIEWER', 'BOX_OFFICE', 'ADMIN'))"
+            )
+            for email, role in STAFF.items():
+                conn.execute("INSERT OR IGNORE INTO users (email) VALUES (?)", (email,))
+                conn.execute("UPDATE users SET role = ? WHERE email = ?", (role, email))
+        return True
     finally:
         conn.close()
 
