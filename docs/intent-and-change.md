@@ -55,7 +55,7 @@ screening: `[screening.starts_at, screening.starts_at + movie.duration]`.
 |---|---|
 | **Create reservation** | Validates the request, holds the chosen seats, returns a reservation in state `DRAFT` with a `hold_until` deadline. Only accepted while the screening has not started. |
 | **Confirm reservation** | Only while the hold is still alive and (v0.3) the screening has not started. `DRAFT` -> `CONFIRMED` — the operation that makes the seat definitively sold — **unless a seat in the reservation requires approval; then `DRAFT` -> `PENDING_APPROVAL` and the seats stay held until a decision (v0.2).** |
-| **Approve reservation** *(v0.2)* | A box office operator decides a `PENDING_APPROVAL` reservation: approve -> `CONFIRMED`, reject -> `REJECTED`. Only until the screening starts. |
+| **Approve reservation** *(v0.2)* | A box office operator decides a `PENDING_APPROVAL` reservation: approve -> `CONFIRMED`, reject -> `REJECTED`. Only until the screening starts **and (v0.4, CR-C08) within 30 minutes of the confirm that made it pending**. |
 | **Cancel reservation** | `DRAFT`, `PENDING_APPROVAL` or `CONFIRMED` -> `CANCELLED`, allowed until the screening starts. Frees the seats. |
 | **Check availability** | Returns the seat map of a screening, each seat marked free or occupied. |
 
@@ -63,7 +63,8 @@ screening: `[screening.starts_at, screening.starts_at + movie.duration]`.
 
 **Reservation** — identity (`id`), owning `user_id`, target `screening_id`, the set of
 reserved `seat_id`s, `state`, `hold_until`, `created_at`, `confirmed_at`,
-`cancelled_at`.
+`cancelled_at`, and (v0.4) `pending_until` — the approval deadline written when it enters
+`PENDING_APPROVAL`.
 
 **Seat (resource)** — identity (`id`), owning `hall_id`, `row_label`, `seat_number`, and (v0.2)
 `requires_approval` — a fixed property of the seat, e.g. a VIP row. A reservation needs approval
@@ -80,7 +81,7 @@ This single definition is what both business rules stand on:
 > A seat is **occupied** for a screening if there exists a reservation for that seat and
 > screening which is either in state `CONFIRMED`, or in state `DRAFT` whose
 > `hold_until` has not yet passed, or (v0.2) in state `PENDING_APPROVAL` while the screening
-> has not started.
+> has not started and (v0.4) its `pending_until` has not passed.
 
 Without the second half, a hold would block nothing and would be decoration. A pending
 approval blocks its seats for the same reason: otherwise someone else could sell them while
@@ -105,6 +106,7 @@ DRAFT   --hold_until passes---------------------------> EXPIRED    (derived)
 PENDING_APPROVAL --approve----------------------------> CONFIRMED             (v0.2)
 PENDING_APPROVAL --reject-----------------------------> REJECTED              (v0.2)
 PENDING_APPROVAL --screening starts undecided---------> EXPIRED    (derived)  (v0.2)
+PENDING_APPROVAL --30 min after confirm undecided-----> EXPIRED    (derived)  (v0.4, CR-C08)
 DRAFT | PENDING_APPROVAL | CONFIRMED --cancel---------> CANCELLED  (until the screening starts)
 ```
 
@@ -115,7 +117,8 @@ or `PENDING_APPROVAL` -> `CONFIRMED` for seats that need approval): it is the mo
 seat becomes a sold seat, and therefore the moment both business rules must hold.
 
 `CANCELLED`, `EXPIRED` and `REJECTED` are terminal. `PENDING_APPROVAL` that is still undecided
-when the screening starts reads as `EXPIRED` (derived, exactly like an expired hold).
+when the screening starts, or (v0.4) 30 minutes after it started waiting, reads as `EXPIRED` (derived,
+exactly like an expired hold).
 
 **Hold expiry is evaluated lazily.** There is no background job. `hold_until` is compared
 against the current time when a reservation is read or confirmed. A `DRAFT` row whose hold
@@ -247,3 +250,96 @@ We are **not** implementing this pressure in C01. It is recorded here to steer l
 The review loop was deliberately attached to the spike rather than to a throwaway change,
 so that the change a second person had to understand was the one that actually carries
 risk.
+
+---
+
+## C08 / CR-C08 Pending approval limit — Controlled Change Card
+
+> **Status of this card.** Written down on 2026-11-24 together with its implementation (branch `c89`,
+> C09), from the team's C08 analysis. The analysis was done on the C08 reporting baseline `afd8a17`; the
+> code was unchanged in the lifecycle until `3b8f4bf` (PR #15 only added roles and the demo top-up), so
+> `3b8f4bf` is the before baseline used below. **The peer review line is a placeholder until a second team
+> member fills it in.** Test records are in [`evidence-and-evolution.md`](evidence-and-evolution.md),
+> "C08 - Before baseline and TC-C08-01/02" and "C09 - Integration, CI and Release Record".
+
+**Request source and concrete project need.** Box office (stakeholder: cinema operator). A VIP-row (`J`)
+request that nobody decides keeps its seats blocked until the screening starts — possibly for days — and can
+then still be approved long after the viewer has given up. Need: *a pending request that nobody decided
+within 30 minutes must not later become a valid booking, and its seats must go back on sale.*
+
+**Before commit/tag + spec/BR/ADR + schema/config.** `main` @ `3b8f4bf` (PR #15); spec v0.3 (OP-03, OP-05,
+Definition of Occupied, BR-01..BR-04); ADR-003 (lazy expiry), ADR-004 (unique index), ADR-008 (one owner of
+state); schema = `src/cinema/schema.sql` @ `3b8f4bf` (no `pending_until`); config: `CINEMA_DB` only; runtime
+Python 3.11+ (verified on 3.13.18), SQLite 3.53.1; `python -m pytest -q` → 97 passed.
+
+**Old accepted behaviour / observable limitation.** `PENDING_APPROVAL` reads as `EXPIRED` only when the
+screening starts (OP-05, v0.2: "Approval is delayed: a reservation stays PENDING_APPROVAL for hours").
+There is no other time limit.
+
+**New intended behaviour, scope, out of scope.** A `PENDING_APPROVAL` request expires 30 minutes after it
+entered `PENDING_APPROVAL` (the confirm instant), measured by the server clock in UTC. Expired requests can
+be neither approved, rejected nor cancelled, read as `EXPIRED`, and no longer occupy their seats.
+*Out of scope:* a background worker, notifying anybody at expiry, a configurable or per-hall limit, an
+owner check, UI redesign.
+
+**Acceptance conditions** (expected results fixed before the implementation; `T` = confirm instant):
+
+| AC | Kind | Condition |
+|---|---|---|
+| AC-01 | positive | Approve at age 29:59 → `200 CONFIRMED`; committed state `CONFIRMED` on both tables, `confirmed_at` = approve instant |
+| AC-02 | negative | Approve at age 30:01 → `409`; the reservation is never `CONFIRMED`; it reads `EXPIRED`; its seats read free |
+| AC-03 | boundary | At exactly `T + 30:00` the request is **already expired** (half-open, age ≥ 30:00 is late — the same convention as `hold_until`) → approve `409` |
+| AC-04 | regression | BR-02: no seat ever has two `CONFIRMED` reservations; after an expiry another viewer can take and confirm the seat once |
+| AC-05 | data | Entering `PENDING_APPROVAL` records the deadline (`pending_until = T + 30 min`), readable via `GET /reservations/{id}` |
+
+Unchanged (regression basis): Create, Check Availability, Confirm of ordinary seats, Cancel, approve/reject
+*within* the limit, roles (`403` before `409`), a pending request outlives the 15-minute `DRAFT` hold,
+notifications. C08 test cases TC-C08-01 (approve next to a confirmed seat) and TC-C08-02 (approve onto a
+confirmed seat → `409`, nothing written).
+
+**Impact analysis method / evidence reviewed.** Started from AC-02, found the owner of the decision
+(`lifecycle.plan` / `effective_state`, called only from `reservations.transition`, ADR-008), followed the data
+to `reservations`/`reservation_seats`, to every reader of "occupied" (`availability.OCCUPIED_SEATS_SQL`, used by
+create and the seat map), to the API, frontend, notifications, schema/startup and tests. Writer paths checked
+with `tests/test_architecture.py`: only `reservations.py` (and the demo seeder, which writes only `CONFIRMED`).
+
+| Dimension / exact artifact | CHANGE/CHECK/NO IMPACT + why | Needed delta/verification | Owner/evidence |
+|---|---|---|---|
+| Spec/BR/state: OP-03, OP-05, Definition of Occupied, state diagram | CHANGE — a new edge `PENDING_APPROVAL → EXPIRED` at the deadline | Spec v0.4, `diagrams.md` v0.4 | TC-C09-02..04, U8 |
+| Architecture/ownership/interfaces: ADR-003, ADR-008 | CHECK — still one writer (Reservation Management), expiry still derived | ADR-009 records the choice; conformance test unchanged | `test_architecture.py` |
+| Detailed design/code: `lifecycle.effective_state`, `ReservationFacts`, `reservations._change_state`, `availability.OCCUPIED_SEATS_SQL` | CHANGE — new fact `pending_until`, written by confirm, compared in two places | Same half-open predicate in both places | U1 (1280 combos), U8, TC-C09-03 (seat map) |
+| Data/schema/migration: `reservations` | CHANGE — nullable column `pending_until`; existing DBs need it | `db.add_pending_until()` at startup, idempotent; legacy pending rows (NULL) read `EXPIRED` (fail-closed) | TC-C09-07, smoke on a before-DB |
+| API: `/confirm`, `/decision`, `/cancel`, `GET /reservations/{id}` | CHECK — status codes unchanged (`409` as for any expired state); GET now also returns `pending_until` | None beyond the spec text | TC-C09-01, -03, -04 |
+| Authorisation/roles | NO IMPACT — role check precedes state check, unchanged | Regression only | `test_c02_operations.py::TestApprove` |
+| Frontend | CHECK — no state shown except the "waiting for approval" message | Message states the 30-minute limit | `npm run build` |
+| Notifications | NO IMPACT — nothing is sent at expiry (no worker); pending notification unchanged | Known limitation | `test_notifications.py` |
+| Configuration/CI/release | CHECK — limit is a code constant (`reservations.APPROVAL_LIMIT`), no new env var; no CI existed | Add `scripts/check.sh` + GitHub Actions workflow | C09 record |
+| Worker / import / admin writer | NO IMPACT — no such write path exists in this system | — | `test_architecture.py` |
+| Operation/recovery | CHECK — pending requests silently drop out of "occupied" after 30 min; rollback of code keeps the column | Document rollback limits | C09 record |
+
+**Alternatives and comparable criteria.**
+
+| Option | Meets AC? | Benefit | Cost/failure/rollback | Verification |
+|---|---|---|---|---|
+| A: lazy expiry at a stored deadline (`pending_until`), checked by the existing owner | Yes (AC-01..05) | Small change, no worker, same pattern as the `DRAFT` hold (ADR-003) | One column + startup upgrade; expired request only "disappears" when read; nobody is notified | 29:59 / 30:00 / 30:01 integration tests, BR-02 regression, migration test |
+| B: scheduler + guard | Yes | Proactive status change; could notify | Second writer (reopens ADR-008), scheduler failure/retry/race, ops weight | Worker + restart + race tests |
+| C: no code change, the box office checks the queue manually | No (AC-02 not guaranteed) | Zero code | Relies on discipline; late approvals still possible | Process check only |
+
+**Inaction consequences / feasible compensation.** VIP seats stay blocked for days by abandoned requests
+and can be approved after the viewer has left; compensation would be manual rejects by the box office (C).
+
+**Peer reviewer and challenged assumption.** _PLACEHOLDER — to be filled in by a second team member
+(name, date, the assumption they challenged, e.g. "is a 30:00 approve late?" or "fail-closed for legacy
+rows")._
+
+**Decision.** **ACCEPT option A** — proposed by Š. Adámek (owner), 2026-11-24. Rationale: meets every AC with
+the smallest delta and follows the existing lazy-expiry design; B's proactive behaviour was not requested.
+_Team confirmation pending (see peer reviewer line and the v0.4 sign-off in `diagrams.md`)._
+
+**If ACCEPT: smallest change and acceptance tests to perform in C09.** Delta: `pending_until` column +
+upgrade, confirm writes it, `effective_state` and `OCCUPIED_SEATS_SQL` compare it, spec/diagrams v0.4.
+Tests: TC-C09-01..07 (new), TC-C08-01/02 and the full existing suite (regression).
+
+**Open uncertainty and next trigger.** No notification at expiry; the 30-minute value is not configurable;
+clock skew between server instances is N/A (one SQLite server). Reopen when the cinema asks to be told
+about expiries or wants a different limit per hall.

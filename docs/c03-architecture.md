@@ -13,7 +13,7 @@ Evidence summary: last section of [`evidence-and-evolution.md`](evidence-and-evo
 |---|---|---|---|
 | **D1** | BR-02; OP-03 step 4; C01 spike; Part A3 (`confirm` runs `UPDATE`, SQLite raises at the statement) | Two concurrent requests can both look conflict-free. The loser is only detected by `uq_confirmed_seat_per_screening` while the `UPDATE` runs, and a failed statement does **not** abort the transaction (Part A3: `COMMIT: reached`). | Where is the authoritative confirmation decision made, and who turns "constraint fired" into "nothing of this reservation is confirmed, answer 409"? |
 | **D2** | ADR-005; Part A5, A8; `main.py` before C03 (`set_state` called from confirm, cancel, decide; two places catch `IntegrityError`) | `reservations.state` and `reservation_seats.state` must change together. Nothing stops a new endpoint from writing one without the other or skipping `ROLLBACK`. | Who owns Reservation state and the transaction around it, so that every transition is checked and written in one place? |
-| **D3** | OP-05; statechart (`PENDING_APPROVAL`); ADR-003 (lazy expiry); Part A5 | `PENDING_APPROVAL` outlives the original request (hours, until `starts_at`). A later request, from another actor, performs the next transition, and expiry is derived, not stored. | Who owns the pending state and the later transitions approve / reject / expire / cancel? |
+| **D3** | OP-05; statechart (`PENDING_APPROVAL`); ADR-003 (lazy expiry); Part A5 | `PENDING_APPROVAL` outlives the original request (hours, until `starts_at`; *since v0.4 / CR-C08 at most 30 minutes, ADR-009*). A later request, from another actor, performs the next transition, and expiry is derived, not stored. | Who owns the pending state and the later transitions approve / reject / expire / cancel? |
 | **D4** | OP-03 step 5, Project Frame boundary rule; `notifications.py` (`notify` swallows errors, called after commit) | The business change is committed before the notification is attempted. A failing notification must not change the outcome, and a crash between commit and notification loses the message. | Does notification failure change the result of Confirm, and who holds the delivery state and any retry? |
 
 Not a driver of this slice but visible in it: **no roles** (OP-05 specifies `403`, the application does not
@@ -235,10 +235,10 @@ There is no arrow from Reservation Management to Notification Integration (D4).
 | (create) → DRAFT | Reservation Management (`create`) | HTTP API (viewer) |
 | DRAFT → CONFIRMED | Reservation Management (`confirm`) | HTTP API (viewer) |
 | DRAFT → PENDING_APPROVAL | Reservation Management (`confirm`) | HTTP API (viewer) |
-| PENDING_APPROVAL → CONFIRMED | Reservation Management (`decide`) | HTTP API (operator — not authorised yet) |
-| PENDING_APPROVAL → REJECTED | Reservation Management (`decide`) | HTTP API (operator — not authorised yet) |
+| PENDING_APPROVAL → CONFIRMED | Reservation Management (`decide`) | HTTP API (operator — not authorised yet; *roles since PR #15*) |
+| PENDING_APPROVAL → REJECTED | Reservation Management (`decide`) | HTTP API (operator — not authorised yet; *roles since PR #15*) |
 | DRAFT / PENDING_APPROVAL / CONFIRMED → CANCELLED | Reservation Management (`cancel`) | HTTP API (viewer, operator) |
-| DRAFT / PENDING_APPROVAL → EXPIRED | Reservation Management (derived in `effective_state`, no write) | – |
+| DRAFT / PENDING_APPROVAL → EXPIRED | Reservation Management (derived in `effective_state`, no write; *v0.4 adds the `pending_until` deadline*) | – |
 
 Availability, Notification Integration and the Store can never request a transition. The Store can only **veto** one
 (the unique index).

@@ -1,0 +1,8 @@
+# Mutation check of the automated script: APPROVAL_LIMIT changed 30 -> 31 min in a scratch copy of 5984d13, SKIP_FRONTEND=1 ./scripts/check.sh
+# exit code: 1 (the script fails, as it must)
+tests/test_notifications.py::test_failed_notification_never_fails_the_reservation PASSED [100%]
+FAILED tests/test_c09_pending_limit.py::test_tc_c09_01_confirm_records_the_approval_deadline
+FAILED tests/test_c09_pending_limit.py::test_tc_c09_03_approve_at_or_after_the_limit_is_409_and_confirms_nothing[30:00]
+FAILED tests/test_c09_pending_limit.py::test_tc_c09_03_approve_at_or_after_the_limit_is_409_and_confirms_nothing[30:01]
+FAILED tests/test_c09_pending_limit.py::test_tc_c09_04_reject_and_cancel_after_the_limit_are_409
+======================== 4 failed, 104 passed in 10.20s ========================

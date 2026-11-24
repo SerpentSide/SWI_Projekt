@@ -118,6 +118,9 @@ read and every command uses it). Both compare
 (`TestAvailability::test_hold_boundary_is_exclusive`, `test_lifecycle.py` U3).
 Since PR #11 nothing writes `EXPIRED` at all: Confirm used to store it when it refused an expired
 hold, now the row keeps `DRAFT` (or `PENDING_APPROVAL`) and only reads as `EXPIRED`.
+*(v0.4, ADR-009)* The 30-minute approval limit follows the same decision: a third predicate,
+`pending_until > now`, lives in the same two places and is tested at the same half-open boundary
+(`test_lifecycle.py` U8, `test_c09_pending_limit.py` TC-C09-03).
 
 **What would change our mind.** A reporting or analytics need for accurate `EXPIRED`
 timestamps, which lazy evaluation cannot provide.
@@ -299,6 +302,41 @@ schema migration of existing databases.
 service) or the database changes (then B's constraint, or a transactional outbox, becomes necessary);
 the notification becomes a real external provider that needs retry; or roles are added and the
 authorisation belongs next to the transition.
+
+*Update (roles, PR #15):* roles were added and the authorisation **did** go next to the transition
+(`Rule.allowed_roles` in `lifecycle.TRANSITIONS`, checked first in `plan`); the third negative consequence
+above is therefore resolved for `decide`. An owner check on confirm/cancel is still missing.
+
+---
+
+## ADR-009 — A pending approval expires lazily at a stored deadline (CR-C08)
+
+**Status:** accepted by the author on branch `c89` (C09); **team review pending** — see the CR-C08 Change
+Card in [`intent-and-change.md`](intent-and-change.md#c08--cr-c08-pending-approval-limit--controlled-change-card).
+
+**Context.** CR-C08: a `PENDING_APPROVAL` request that nobody decided within 30 minutes must not later
+become `CONFIRMED`, and its seats go back on sale. Before v0.4 a pending request lived until the screening
+started (possibly days).
+
+**Decision.** Option A of the Change Card: **lazy expiry at a stored deadline**. Confirm writes
+`reservations.pending_until = now + 30 min` in the same transaction that writes `PENDING_APPROVAL`
+(`reservations._change_state`). `lifecycle.effective_state` and `availability.OCCUPIED_SEATS_SQL` treat a
+pending request with `pending_until <= now` as `EXPIRED`, exactly like an expired hold (ADR-003). Nothing
+writes `EXPIRED`. The limit is the constant `reservations.APPROVAL_LIMIT` (30 min), not configuration.
+A pending row with `pending_until IS NULL` (written before v0.4) reads `EXPIRED` (fail-closed).
+
+**Alternatives rejected.** (B) a scheduler that flips stale pending rows — the same reasons as in ADR-003,
+plus it would be the second writer that reopens ADR-008. (C) measuring from `created_at` — `created_at`
+is the start of the `DRAFT` hold, not of the wait, so a request confirmed at minute 14 would get only 16
+minutes. (D) reusing `hold_until` for the deadline — no migration, but one column with two meanings and
+the v0.2 claim "pending is not on the hold clock" would silently change meaning.
+
+**Consequences.** One nullable column and an idempotent startup upgrade (`db.add_pending_until`) for old
+databases; legacy pending rows expire on upgrade. A pending request disappears from "occupied" without
+anyone being told (no notification, no worker). The 30-minute value needs a code change to tune.
+
+**What would change our mind.** The cinema wants the box office or the viewer *notified* at expiry, or wants
+a per-hall/per-screening limit — then a scheduler (option B) or a configuration value is needed.
 
 ---
 
@@ -506,7 +544,7 @@ the read side (`get`, `list_for_user`) uses only R1.
 
 | # | Detailed responsibility | Why is it needed? |
 |---|---|---|
-| **R1** | **Derive the effective state** of a Reservation at one instant `at`: a `DRAFT` with `hold_until <= at`, or a `PENDING_APPROVAL` whose screening has `starts_at <= at`, *is* `EXPIRED`; otherwise the stored state. | ADR-003: expiry is never written, so it must be computed — and computed the **same way** by every read and every command. OP-03/OP-05 require the 409 reason to name the *current* (lazily derived) state. Today `confirm` names the stored state, so a pending reservation of a started screening is reported as `PENDING_APPROVAL`, not `EXPIRED`. |
+| **R1** | **Derive the effective state** of a Reservation at one instant `at`: a `DRAFT` with `hold_until <= at`, or a `PENDING_APPROVAL` whose screening has `starts_at <= at` *(v0.4: or whose `pending_until <= at` / is NULL, ADR-009)*, *is* `EXPIRED`; otherwise the stored state. | ADR-003: expiry is never written, so it must be computed — and computed the **same way** by every read and every command. OP-03/OP-05 require the 409 reason to name the *current* (lazily derived) state. Today `confirm` names the stored state, so a pending reservation of a started screening is reported as `PENDING_APPROVAL`, not `EXPIRED`. |
 | **R2** | **Decide whether the command is allowed from the effective state**: one table *command × effective state → allowed / refused*. Refusal carries the effective state in its reason. | C02 state diagram and BR-03: `CANCELLED`, `EXPIRED`, `REJECTED` are terminal; confirm only from `DRAFT`, approve/reject only from `PENDING_APPROVAL`, cancel from `DRAFT`/`PENDING_APPROVAL`/`CONFIRMED`. Today these rules are three separate `if`s in three functions; a new state or command (the next change card) would have to be added to each. |
 | **R3** | **Check the screening-start guard** `at < starts_at` (BR-01) for the commands that need it: cancel, approve, reject — and, since spec v0.3, confirm (see the note under 3.2). | Independent of R1: a `DRAFT` whose 15-minute hold is still running can belong to a screening that has just started — its effective state is `DRAFT`, yet cancel must be refused (BR-03). Kept separate so R1 stays "what state is it" and R3 stays "is it still too late to act". |
 | **R4** | **Choose the target state and its timestamp**: confirm → `PENDING_APPROVAL` if any seat requires approval, else `CONFIRMED` + `confirmed_at`; approve → `CONFIRMED` + `confirmed_at`; reject → `REJECTED`; cancel → `CANCELLED` + `cancelled_at`. | OP-03 (v0.2 variant), OP-04, OP-05 postconditions. The confirm branch depends on data (`seats.requires_approval`), so it is a real decision, not a constant. |
@@ -805,7 +843,8 @@ Failure behavior: n/a (it is the failure translation)
 effective_state(facts, at):
     if facts.stored_state == DRAFT and facts.hold_until <= at:            # 15-minute hold passed
         return EXPIRED
-    if facts.stored_state == PENDING_APPROVAL and facts.starts_at <= at:  # approval came too late
+    if facts.stored_state == PENDING_APPROVAL and (facts.starts_at <= at  # approval came too late
+            or facts.pending_until is None or facts.pending_until <= at):    # v0.4: 30-min limit (ADR-009)
         return EXPIRED
     return facts.stored_state
 
@@ -844,6 +883,10 @@ The same as a decision table — every combination a test can pick from (`starte
 | 14 | cancel | DRAFT | no | – | – | Refused "…a EXPIRED reservation" |
 | 15 | cancel | CANCELLED / REJECTED | – | – | – | Refused, names the stored state |
 | 16 | confirm | DRAFT | yes | yes | – | Refused "The screening has already started" *(v0.3)* |
+| 17 | approve / reject / cancel | PENDING_APPROVAL, `pending_until <= at` (or NULL) | – | no | – | Refused "…a EXPIRED reservation" *(v0.4, ADR-009)* |
+
+*(v0.4)* Rows 7, 8 and 11 for `PENDING_APPROVAL` additionally need `pending_until > at`; row 17 is the
+other side of that boundary. `ReservationFacts` gained `pending_until: str | None`.
 
 Row 12 is the case that justifies R3 being separate from R1; row 16 is the same case for confirm (v0.3). Rows 5 and 9 are where the DD deliberately
 differs from today's code (today: "Cannot confirm a PENDING_APPROVAL reservation" and "The screening has

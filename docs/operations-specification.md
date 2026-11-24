@@ -1,12 +1,15 @@
 # Operations Specification (C02)
 
-**Version: Specification Baseline v0.3** = v0.2 (approved by the team, all four members, sign-off in
-[`diagrams.md`](diagrams.md), confirmed 2026-10-13) plus one change: **Confirm is refused once the screening
-has started** (2026-10-20; sign-off of v0.3 in [`diagrams.md`](diagrams.md)). v0.1 is the four-operation
+**Version: Specification Baseline v0.4** = v0.3 plus one change: **a pending approval expires 30 minutes
+after it started waiting** (CR-C08, the C08 Change Card in [`intent-and-change.md`](intent-and-change.md#c08--cr-c08-pending-approval-limit--controlled-change-card),
+implemented in C09; team sign-off of v0.4 is still **pending** — see the Change Card's review line).
+v0.3 = v0.2 plus **Confirm is refused once the screening has started** (2026-10-20; sign-off of v0.3 in
+[`diagrams.md`](diagrams.md)); v0.2 was approved by the team, all four members, sign-off in
+[`diagrams.md`](diagrams.md), confirmed 2026-10-13. v0.1 is the four-operation
 version at commit `1a7e2e6`; what changed and what did not is in
 [`c02-change-impact.md`](c02-change-impact.md). Passages changed by v0.2 are marked *(v0.2)*, by v0.3
-*(v0.3)*; why v0.3 was needed is in [`evidence-and-evolution.md`](evidence-and-evolution.md), "Change after
-C05: Confirm is start-guarded (v0.3)".
+*(v0.3)*, by v0.4 *(v0.4)*; why v0.3 was needed is in [`evidence-and-evolution.md`](evidence-and-evolution.md), "Change after
+C05: Confirm is start-guarded (v0.3)"; why v0.4 is in the CR-C08 Change Card.
 
 This document is the complete minimum-behavior specification for the core operations named
 in the Project Frame ([`intent-and-change.md`](intent-and-change.md#core-operations)):
@@ -21,9 +24,13 @@ Terms used below without re-definition are defined once, here:
 - **Occupied** (from the Project Frame): a seat is occupied for a screening if a reservation
   for that seat and screening exists in state `CONFIRMED`, or in state `DRAFT` with
   `hold_until` not yet passed, or *(v0.2)* in state `PENDING_APPROVAL` while
-  `now < screening.starts_at`. This is evaluated lazily at read time (ADR-003): a `DRAFT`
-  whose hold has passed, or a `PENDING_APPROVAL` whose screening has started, *reads as*
-  `EXPIRED` and occupies nothing. Whether the stored `state`
+  `now < screening.starts_at` *(v0.4)* and `now < pending_until`. This is evaluated lazily at read time (ADR-003): a `DRAFT`
+  whose hold has passed, or a `PENDING_APPROVAL` whose screening has started or *(v0.4)* whose
+  approval deadline `pending_until` has been reached, *reads as* `EXPIRED` and occupies nothing.
+- **Approval deadline** *(v0.4)*: `pending_until = the instant the reservation entered PENDING_APPROVAL + 30 min`
+  (server clock, stored as ISO-8601 UTC, written by Confirm). Half-open like the hold: at exactly
+  `pending_until` the request is already `EXPIRED` (age ≥ 30:00 is late). A `PENDING_APPROVAL` row
+  without a deadline (stored before v0.4) reads as `EXPIRED` (fail-closed). Whether the stored `state`
   column is also rewritten is an implementation choice, not observable through the four
   operations, and deliberately not specified here (ADR-003: "the `EXPIRED` state may be
   implicit in the table for a while").
@@ -152,7 +159,7 @@ screening does not exist.
 2. System loads every seat belonging to that screening's hall.
 3. For each seat, system evaluates Occupied against the current time (CONFIRMED, DRAFT
    with `hold_until` in the future, or *(v0.2)* PENDING_APPROVAL of a screening that has not
-   started).
+   started *(v0.4)* and whose `pending_until` is in the future).
 4. System returns the full seat map, one entry per seat with its `occupied` flag.
 
 ### Alternative / failure outcomes
@@ -210,8 +217,9 @@ of the reservation requires approval, and `PENDING_APPROVAL` when at least one d
 - no seat requires approval: reservation `state = CONFIRMED`, `confirmed_at = now`; every
   one of its `reservation_seats` rows `state = CONFIRMED`;
 - at least one seat requires approval: reservation `state = PENDING_APPROVAL`, no
-  `confirmed_at`; every one of its `reservation_seats` rows `state = PENDING_APPROVAL`; its
-  seats stay occupied.
+  `confirmed_at`, *(v0.4)* `pending_until = now + 30 min`; every one of its `reservation_seats` rows
+  `state = PENDING_APPROVAL`; its seats stay occupied (until the screening starts or `pending_until`,
+  whichever is first).
 
 In both cases no seat of the reservation is left in a different state from the rest.
 
@@ -245,10 +253,12 @@ Steps 1–2 are as above. Then:
 3. System sees that at least one of the reservation's seats requires approval.
 4. Instead of `CONFIRMED`, system writes `PENDING_APPROVAL` to the reservation and to every
    one of its `reservation_seats` rows, in the same transaction. `confirmed_at` stays empty.
+   *(v0.4)* The same write sets `pending_until = now + 30 min` on the reservation.
 5. On commit, system calls `NotificationService.reservation_pending_approval(reservation)`
    (the viewer is told the reservation is saved and waits for approval) and ignores its outcome.
 6. System returns `200` with state `PENDING_APPROVAL`. The seats remain occupied; nothing
-   else can take them while the decision is pending.
+   else can take them while the decision is pending *(v0.4)* — at most 30 minutes; `GET
+   /reservations/{id}` shows the deadline as `pending_until`.
 
 `uq_confirmed_seat_per_screening` does not fire here (it covers `CONFIRMED` only); the seats'
 exclusivity while pending comes from the Definition of Occupied and from create's exclusivity.
@@ -377,11 +387,10 @@ decision of `approve` or `reject`.
 (and `confirmed_at` is set) for `approve`, `REJECTED` for `reject` — or a documented failure.
 
 **Preconditions:**
-- The caller is acting as a box office operator. How that is established is **not** part of
-  this baseline (see Assumption below).
+- The caller is acting as a box office operator (role `BOX_OFFICE` or `ADMIN`; see Assumption below).
 - The reservation exists.
 - Its (lazily evaluated) state is `PENDING_APPROVAL` — i.e. stored `PENDING_APPROVAL` **and**
-  `now < screening.starts_at`.
+  `now < screening.starts_at` **and** *(v0.4)* `now < pending_until`.
 
 **Success postcondition:**
 - `approve`: reservation `state = CONFIRMED`, `confirmed_at = now`; every one of its
@@ -400,7 +409,7 @@ is terminal); ADR-005 (reservation and seat rows change together, in one transac
 ### Main success scenario
 1. Operator opens a `PENDING_APPROVAL` reservation and submits a decision.
 2. System begins a transaction and re-reads the reservation: stored state is
-   `PENDING_APPROVAL` and the screening has not started.
+   `PENDING_APPROVAL`, the screening has not started and *(v0.4)* `now < pending_until`.
 3. `approve`: system writes `CONFIRMED` and `confirmed_at = now` to the reservation and
    `CONFIRMED` to every one of its seat rows, in the same transaction; the unique index is
    checked when the seat rows are updated, exactly as in Confirm.
@@ -420,6 +429,10 @@ is terminal); ADR-005 (reservation and seat rows change together, in one transac
   Cancel after a successful approval cancels a `CONFIRMED` reservation, which BR-03 allows.)
 - `now >= screening.starts_at` (the pending approval has expired) → `409`; the reservation
   reads as `EXPIRED` and holds no seats.
+- *(v0.4)* `now >= pending_until` (nobody decided within 30 minutes) → `409` with the reason
+  `Cannot approve a EXPIRED reservation` (or `reject`); the reservation reads as `EXPIRED`, holds no
+  seats, and is never `CONFIRMED`. `EXPIRED` is not written to the table (ADR-003); the stored row
+  stays `PENDING_APPROVAL`. Cancel of such a reservation is `409` too, as for an expired `DRAFT`.
 - The database rejects an approval because a seat is already `CONFIRMED` elsewhere → `409`;
   nothing of this reservation becomes `CONFIRMED`. (Not expected while pending reservations
   block their seats; kept because the guarantee must not depend on that.)
@@ -430,8 +443,12 @@ is terminal); ADR-005 (reservation and seat rows change together, in one transac
   → `409`.
 - `PENDING_APPROVAL`, `reject` → `200 REJECTED`; the seats read `free`; a later `approve` →
   `409`.
-- Approval is **delayed**: a reservation stays `PENDING_APPROVAL` for hours and its seats
-  read `occupied` throughout (it does not expire with the 15-minute hold).
+- Approval is **delayed** beyond the 15-minute hold: 20 minutes after confirm a reservation still
+  reads `PENDING_APPROVAL`, its seats read `occupied` and `approve` → `200` (it does not expire with
+  the 15-minute `DRAFT` hold). *(v0.4: before v0.4 this example said "for hours"; the limit is now 30 minutes.)*
+- *(v0.4)* Pending since `T`: approve at `T + 29:59` → `200 CONFIRMED`; approve at exactly `T + 30:00`
+  → `409`, reads `EXPIRED`; approve at `T + 30:01` → `409`; in the last two cases no seat of it is
+  `CONFIRMED` and its seats read `free`.
 - Approve one second after the screening's `starts_at` → `409`, and the reservation reads
   `EXPIRED`.
 - Cancel and approve arrive together for the same `PENDING_APPROVAL` reservation → Cancel
@@ -442,8 +459,9 @@ is terminal); ADR-005 (reservation and seat rows change together, in one transac
 ### Rationale / source
 The change card: some resources require approval by an authorised person before a
 reservation may be `CONFIRMED`, and the approval may be delayed, rejected or expire.
-Expiry is tied to the screening's start (`starts_at`) so no timeout value has to be
-invented.
+In v0.2 expiry was tied to the screening's start (`starts_at`) so no timeout value had to be
+invented. *(v0.4)* CR-C08 adds the 30-minute approval limit: a request nobody decided within
+30 minutes must not later become a valid booking, and its seats go back on sale.
 
 ### Assumption / unknown / TBD
 - **How a caller is recognised as a box office operator.** Decided: every user has a role
