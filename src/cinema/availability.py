@@ -7,7 +7,9 @@ from __future__ import annotations
 from collections import defaultdict
 
 # The ONE place that defines "occupied": confirmed, or a draft whose hold is still running.
-# v0.2: a reservation waiting for approval also blocks its seats, until the screening starts.
+# v0.2: a reservation waiting for approval also blocks its seats, until the screening starts;
+# v0.4 (CR-C08): and only until its approval deadline `pending_until` (NULL: legacy row, not occupied).
+# Must agree with lifecycle.effective_state (tests/test_c09_pending_limit.py checks both).
 OCCUPIED_SEATS_SQL = """
     SELECT rs.seat_id
     FROM reservation_seats rs
@@ -16,12 +18,12 @@ OCCUPIED_SEATS_SQL = """
     WHERE rs.screening_id = ?
       AND (r.state = 'CONFIRMED'
            OR (r.state = 'DRAFT' AND r.hold_until > ?)
-           OR (r.state = 'PENDING_APPROVAL' AND sc.starts_at > ?))
+           OR (r.state = 'PENDING_APPROVAL' AND sc.starts_at > ? AND r.pending_until > ?))
 """
 
 
 def occupied_seat_ids(db, screening_id: int, at: str) -> set[int]:
-    return {row["seat_id"] for row in db.execute(OCCUPIED_SEATS_SQL, (screening_id, at, at))}
+    return {row["seat_id"] for row in db.execute(OCCUPIED_SEATS_SQL, (screening_id, at, at, at))}
 
 
 def has_isolated_free_seat(occupied: list[bool]) -> bool:

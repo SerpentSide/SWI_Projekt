@@ -13,10 +13,10 @@ A reservation system for cinema seats, built for SWI. The reserved resource is a
 
 | Document | Contains |
 |---|---|
-| [docs/intent-and-change.md](docs/intent-and-change.md) | Project Frame, selected future pressure, the C01 change + review loop |
-| [docs/architecture-and-decisions.md](docs/architecture-and-decisions.md) | Architecture sketch, ADR-001 … ADR-008, C03 Part A (AS-IS trace of Confirm Reservation) and the C05 Detailed Design of the Reservation lifecycle |
-| [docs/evidence-and-evolution.md](docs/evidence-and-evolution.md) | C01 engineering spike, C02 evidence (specification → running app), C03 architecture evidence, why there is no C04 artifact, C05 DD verification evidence, the v0.3 change after C05 |
-| [docs/operations-specification.md](docs/operations-specification.md) | C02: full spec of the four core operations (Create, Check Availability, Confirm, Cancel), the v0.2 Approve operation, and the shared business rules/invariants (BR-01 .. BR-04); baseline v0.3 |
+| [docs/intent-and-change.md](docs/intent-and-change.md) | Project Frame, selected future pressure, the C01 change + review loop, the **C08 Change Card CR-C08** (pending approval limit) |
+| [docs/architecture-and-decisions.md](docs/architecture-and-decisions.md) | Architecture sketch, ADR-001 … ADR-009, C03 Part A (AS-IS trace of Confirm Reservation) and the C05 Detailed Design of the Reservation lifecycle |
+| [docs/evidence-and-evolution.md](docs/evidence-and-evolution.md) | C01 engineering spike, C02 evidence (specification → running app), C03 architecture evidence, why there is no C04 artifact, C05 DD verification evidence, the v0.3 change after C05, the C08 before baseline + TC-C08-01/02, the **C09 Integration, CI and Release Record**; raw logs in `docs/evidence/c09/` |
+| [docs/operations-specification.md](docs/operations-specification.md) | C02: full spec of the four core operations (Create, Check Availability, Confirm, Cancel), the v0.2 Approve operation, and the shared business rules/invariants (BR-01 .. BR-04); baseline v0.4 |
 | [docs/c02-review.md](docs/c02-review.md) | C02: the acceptance-gate check for each operation, extracted from the spec so it can be reviewed on its own |
 | [docs/diagrams.md](docs/diagrams.md) | C02: use-case, lifecycle (state) and per-operation activity diagrams, with a table tracing each transition to spec text and a test |
 | [docs/c02-change-impact.md](docs/c02-change-impact.md) | C02: impact analysis of the approval change (v0.1 → v0.2), done before the specification was edited |
@@ -24,26 +24,39 @@ A reservation system for cinema seats, built for SWI. The reserved resource is a
 | [docs/where-to-find-what.md](docs/where-to-find-what.md) | Navigation map: ADRs, drivers, operations, rules -> where they live in docs, code and tests |
 | [docs/review.html](docs/review.html) | Team review page — every C01 decision with what it costs. Open it in a browser (double-click, no server needed). Written in Czech for the team. |
 
+## Project status (C09, branch `c89`)
+
+| | |
+|---|---|
+| **Specification** | baseline **v0.4** = v0.3 + CR-C08: a pending approval expires 30 minutes after confirm (team sign-off pending in [docs/diagrams.md](docs/diagrams.md)) |
+| **Change** | [C08 Change Card CR-C08](docs/intent-and-change.md#c08--cr-c08-pending-approval-limit--controlled-change-card) — ACCEPT option A, [ADR-009](docs/architecture-and-decisions.md#adr-009--a-pending-approval-expires-lazily-at-a-stored-deadline-cr-c08) |
+| **Before / after** | before `3b8f4bf` (97 passed) · after `5984d13` (108 passed, clean clone, `./scripts/check.sh` exit 0) |
+| **Release candidate** | **CONDITIONAL** — waiting for peer review, an independent clean checkout by a second member and the first green CI run ([C09 record](docs/evidence-and-evolution.md#c09---integration-ci-and-release-record)) |
+| **Known gaps** | no owner check on confirm/cancel; no notification when a pending request expires; backend dependencies not pinned |
+
 ## The domain in one screen
 
 **Resource:** `Seat` (hall, row, number) — occupied for the duration of the screening.
 **Reservation:** one viewer's claim on 1..N seats of one screening.
 **States:** `DRAFT` → `CONFIRMED` → `CANCELLED`, plus `EXPIRED` when a hold runs out. Seats that
-need approval (v0.2) go `DRAFT` → `PENDING_APPROVAL` → `CONFIRMED` or `REJECTED`; the full
+need approval (v0.2) go `DRAFT` → `PENDING_APPROVAL` → `CONFIRMED` or `REJECTED`; a pending request
+that nobody decides within **30 minutes** expires (v0.4, CR-C08); the full
 lifecycle is in [docs/diagrams.md](docs/diagrams.md).
 
 ```
 create   : [start] -> DRAFT
 confirm  : DRAFT -> CONFIRMED                       (no seat needs approval; until the screening starts, v0.3)
            DRAFT -> PENDING_APPROVAL                (a seat needs approval; until the screening starts, v0.3)
-approve  : PENDING_APPROVAL -> CONFIRMED
+approve  : PENDING_APPROVAL -> CONFIRMED           (until the screening starts and within 30 min of confirm, v0.4)
 reject   : PENDING_APPROVAL -> REJECTED
 cancel   : DRAFT | PENDING_APPROVAL | CONFIRMED -> CANCELLED   (until the screening starts)
-derived  : DRAFT (hold passed) -> EXPIRED;  PENDING_APPROVAL (screening started) -> EXPIRED
+derived  : DRAFT (hold passed) -> EXPIRED
+           PENDING_APPROVAL (screening started, or 30 min after confirm -- v0.4) -> EXPIRED
 ```
 
 **Occupied** = a seat with a `CONFIRMED` reservation, a `DRAFT` one whose 15-minute hold is
-still running, *or* a `PENDING_APPROVAL` one while the screening has not started. Both business
+still running, *or* a `PENDING_APPROVAL` one while the screening has not started and its 30-minute
+approval deadline (`pending_until`, v0.4) has not passed. Both business
 rules stand on this one definition.
 
 **Common rule.** Two confirmed reservations for the same seat must not overlap in time.
@@ -130,8 +143,9 @@ python3 -m venv .venv
 npm --prefix src/frontend ci && npm --prefix src/frontend run dev   # UI on http://localhost:5173
 ```
 
-Expected result: **97 passed** — `test_c02_operations.py` 58, `test_api.py` 9, `test_lifecycle.py` 10,
-`test_notifications.py` 7, `test_c05_transition.py` 7, `test_architecture.py` 4, `test_double_booking_spike.py` 2. Among them:
+Expected result: **108 passed** — `test_c02_operations.py` 58, `test_c09_pending_limit.py` 10, `test_api.py` 9,
+`test_lifecycle.py` 11, `test_notifications.py` 7, `test_c05_transition.py` 7, `test_architecture.py` 4,
+`test_double_booking_spike.py` 2. Among them:
 
 ```
 tests/test_api.py::test_walking_skeleton PASSED
@@ -147,6 +161,37 @@ tests/test_double_booking_spike.py::test_with_db_constraint_the_seat_is_sold_onc
 The first spike test is meant to pass by *reproducing the double-booking bug* with the
 safety index dropped; the second shows the index preventing it. No external service to
 start or tear down — SQLite is a file, created fresh per test by pytest's `tmp_path` fixture.
+The integration tests in `test_c09_pending_limit.py` go through the real API into that SQLite file
+and read the committed state back through a second connection; only the server clock is controlled.
+
+### One command: build and test (C09)
+
+```bash
+./scripts/check.sh                   # venv + dependencies, all backend tests, frontend npm ci + build
+SKIP_FRONTEND=1 ./scripts/check.sh   # backend only, no Node.js needed
+```
+
+Exit code `0` means every step passed. Reports go to `build/` (`pytest-junit.xml`, `pytest.log`,
+`pip-freeze.txt` with the resolved dependency versions). The same script runs in GitHub Actions on every
+push and pull request (`.github/workflows/ci.yml`). It is a bash script: on Windows run it from Git Bash or
+WSL, or use the step-by-step commands above.
+
+### Clean checkout
+
+Needs Python ≥ 3.11 (CI uses 3.13), git, and for the frontend Node.js ≥ 20 with npm. No environment
+variables are required; `CINEMA_DB` optionally points the API at another SQLite file. No secrets exist.
+
+```bash
+git clone https://github.com/SerpentSide/SWI_Projekt.git swi-clean && cd swi-clean
+git checkout c89                      # or the commit/tag under test
+./scripts/check.sh                    # expect: 108 passed, frontend built, "ALL CHECKS PASSED", exit 0
+./.venv/bin/uvicorn cinema.main:app --app-dir src --port 8000 &
+curl -s localhost:8000/health         # expect: {"status":"ok"}
+```
+
+The first start creates `cinema.sqlite3` with demo data. An existing database from an older version is
+upgraded in place at startup (the `users.role` column and, since v0.4, `reservations.pending_until`); a
+pending request stored before v0.4 has no deadline and reads `EXPIRED`.
 
 The API keeps its data in `cinema.sqlite3` in the repository root (override with the
 `CINEMA_DB` environment variable). On first start it creates the schema and loads demo
@@ -155,8 +200,9 @@ data: `seed.sql` plus random screenings and already-reserved seats from `seed.py
 than a week away, it adds new screenings from the day after it to the end of next month, so an
 old database never runs out of bookable screenings; existing data is kept. To wipe
 it and reseed: `PYTHONPATH=src ./.venv/bin/python -m cinema.main` (needed after a schema
-change, e.g. the `notifications` table — the API only creates the schema in an empty file; the one
-exception is `users.role`, which it adds to an older database together with the staff accounts).
+change, e.g. the `notifications` table — the API only creates the schema in an empty file; the
+exceptions are `users.role`, which it adds to an older database together with the staff accounts, and
+`reservations.pending_until` (v0.4), which it adds as an empty column).
 
 The frontend calls the API through Vite's dev proxy (`/api` → `localhost:8000`), so start
 the backend first.
@@ -179,11 +225,11 @@ e-mail creates a new `VIEWER` on first login.
 | `GET /screenings/{id}` | one screening |
 | `GET /screenings/{id}/availability` | every seat of the hall with `occupied` |
 | `POST /reservations` `{user_id, screening_id, seat_ids}` | 201 DRAFT hold · 404 · 409 taken · 422 orphan seat |
-| `GET /reservations/{id}` | reservation with its seats |
+| `GET /reservations/{id}` | reservation with its seats (and `pending_until`, the approval deadline, once pending) |
 | `GET /users/{id}/reservations` | a user's reservations |
-| `POST /reservations/{id}/confirm` | DRAFT → CONFIRMED, or DRAFT → PENDING_APPROVAL if a seat needs approval (409 if expired, seat taken or the screening has started) |
+| `POST /reservations/{id}/confirm` | DRAFT → CONFIRMED, or DRAFT → PENDING_APPROVAL (deadline now + 30 min) if a seat needs approval (409 if expired, seat taken or the screening has started) |
 | `POST /reservations/{id}/cancel` | → CANCELLED, returns `cancelled_at` (until the screening starts) |
-| `POST /reservations/{id}/decision` `{decision: approve\|reject}` | `BOX_OFFICE` / `ADMIN`: PENDING_APPROVAL → CONFIRMED / REJECTED · 401 no `X-User-Id` · 403 other role |
+| `POST /reservations/{id}/decision` `{decision: approve\|reject}` | `BOX_OFFICE` / `ADMIN`: PENDING_APPROVAL → CONFIRMED / REJECTED · 401 no `X-User-Id` · 403 other role · 409 after the 30-minute limit or the screening start |
 | `POST /movies` `{title, duration_minutes, …}` | `ADMIN`: add a movie; notifies every user · 401 · 403 |
 | `POST /users/{id}/notifications/deliver` | the browser's poll: undelivered notifications, marked delivered |
 | `GET /health` | liveness check |
@@ -196,15 +242,19 @@ requirements.txt                     runtime deps (FastAPI)
 requirements-dev.txt                 test deps
 pytest.ini                           pytest settings (src on the path)
 start.ps1                            Windows: venv, dependencies, backend and frontend in one command
+scripts/check.sh                     C09: one command for dependencies, all tests and the frontend build (also CI)
+.github/workflows/ci.yml             C09: GitHub Actions job that runs scripts/check.sh on push / PR
 docs/
-  intent-and-change.md               Project Frame, future pressure, change + review loop
-  operations-specification.md        C02: specification of OP-01 .. OP-05, rules BR-01 .. BR-04
+  intent-and-change.md               Project Frame, future pressure, change + review loop, C08 Change Card CR-C08
+  operations-specification.md        C02: specification of OP-01 .. OP-05, rules BR-01 .. BR-04 (baseline v0.4)
   c02-review.md                      C02: acceptance-gate check of each operation
   diagrams.md                        C02: use-case, state and activity diagrams
   c02-change-impact.md               C02: impact analysis of the approval change
-  architecture-and-decisions.md      architecture sketch, ADR-001 .. ADR-008, C03 Part A
+  architecture-and-decisions.md      architecture sketch, ADR-001 .. ADR-009, C03 Part A, C05 Detailed Design
   c03-architecture.md                C03: drivers, alternatives, views, AS-IS -> TO-BE delta
-  evidence-and-evolution.md          C01 spike, C02 evidence, C03 evidence, C04 note, C05 evidence, v0.3 change
+  evidence-and-evolution.md          C01 spike, C02 evidence, C03 evidence, C04 note, C05 evidence, v0.3 change,
+                                     C08 test cases, C09 Integration, CI and Release Record
+  evidence/c09/                      C09 raw logs: red-first run, clean-clone check, smoke + migration, mutation check
   where-to-find-what.md              navigation map (Czech): decisions, drivers, operations -> docs, code, tests
   review.html                        C01 team review page (Czech, open in a browser)
   trace_confirm.py                   C03 Part A runtime trace of the Confirm conflict (throw-away database)
@@ -229,4 +279,5 @@ tests/
   test_architecture.py               C03: only reservations.py writes Reservation state
   test_lifecycle.py                  C05: unit tests of the lifecycle policy
   test_c05_transition.py             C05: transition path, atomicity and BR-02 conflict
+  test_c09_pending_limit.py          C08/C09: TC-C08-01/02 and the 30-minute approval limit through API + SQLite
 ```

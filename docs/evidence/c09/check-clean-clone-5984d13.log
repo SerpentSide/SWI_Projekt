@@ -1,0 +1,140 @@
+# ./scripts/check.sh on a fresh clone of commit 5984d13 (2026-11-24, Linux, Python 3.13.18, SQLite 3.53.1, Node v22.23.5)
+# exit code: 0
+== commit:  5984d13
+== python:  Python 3.13.18
+== creating .venv
+[notice] A new release of pip is available: 26.2.2 -> 26.3
+[notice] To update, run: /tmp/claude-0/clean/.venv/bin/python -m pip install --upgrade pip
+== sqlite:  3.53.1
+== backend tests (unit + API/SQLite integration), report: build/pytest-junit.xml
+============================= test session starts ==============================
+platform linux -- Python 3.13.18, pytest-8.3.4, pluggy-1.7.0 -- /tmp/claude-0/clean/.venv/bin/python
+rootdir: /tmp/claude-0/clean
+configfile: pytest.ini
+plugins: anyio-4.16.0
+collecting ... collected 108 items
+tests/test_api.py::test_walking_skeleton PASSED                          [  0%]
+tests/test_api.py::test_taken_seat_is_409 PASSED                         [  1%]
+tests/test_api.py::test_orphan_seat_is_422 PASSED                        [  2%]
+tests/test_api.py::test_unknown_screening_or_seat_is_404 PASSED          [  3%]
+tests/test_api.py::test_seed_has_no_hall_overlaps_or_orphans PASSED      [  4%]
+tests/test_api.py::test_double_confirm_is_409 PASSED                     [  5%]
+tests/test_api.py::test_seed_text_is_read_as_utf8 PASSED                 [  6%]
+tests/test_api.py::test_stale_demo_database_gets_new_screenings_and_keeps_its_data PASSED [  7%]
+tests/test_api.py::test_database_from_before_roles_gets_the_role_column_and_staff PASSED [  8%]
+tests/test_architecture.py::test_only_reservation_management_changes_reservation_state PASSED [  9%]
+tests/test_architecture.py::test_the_check_detects_a_violation PASSED    [ 10%]
+tests/test_architecture.py::test_reservation_management_does_not_depend_on_http_or_notifications PASSED [ 11%]
+tests/test_architecture.py::test_a_state_change_outside_a_transaction_is_refused PASSED [ 12%]
+tests/test_c02_operations.py::TestCreate::test_valid_request_makes_a_draft_with_a_15_minute_hold PASSED [ 12%]
+tests/test_c02_operations.py::TestCreate::test_screening_that_already_started_is_409 PASSED [ 13%]
+tests/test_c02_operations.py::TestCreate::test_unknown_viewer_is_404 PASSED [ 14%]
+tests/test_c02_operations.py::TestCreate::test_duplicate_seat_ids_are_422 PASSED [ 15%]
+tests/test_c02_operations.py::TestCreate::test_empty_seat_ids_are_422 PASSED [ 16%]
+tests/test_c02_operations.py::TestCreate::test_seat_of_another_hall_is_404 PASSED [ 17%]
+tests/test_c02_operations.py::TestCreate::test_seat_held_as_live_draft_by_someone_else_is_409 PASSED [ 18%]
+tests/test_c02_operations.py::TestCreate::test_seat_whose_hold_expired_can_be_taken_again PASSED [ 19%]
+tests/test_c02_operations.py::TestCreate::test_orphan_seat_is_422 PASSED [ 20%]
+tests/test_c02_operations.py::TestCreate::test_spec_example_a3_a4_ok_and_a4_a5_a6_orphan PASSED [ 21%]
+tests/test_c02_operations.py::TestCreate::test_two_simultaneous_creates_on_one_seat_give_exactly_one_201 PASSED [ 22%]
+tests/test_c02_operations.py::TestAvailability::test_fresh_screening_is_entirely_free PASSED [ 23%]
+tests/test_c02_operations.py::TestAvailability::test_unknown_screening_is_404 PASSED [ 24%]
+tests/test_c02_operations.py::TestAvailability::test_confirmed_occupies_and_expired_draft_does_not PASSED [ 25%]
+tests/test_c02_operations.py::TestAvailability::test_live_draft_occupies PASSED [ 25%]
+tests/test_c02_operations.py::TestAvailability::test_hold_boundary_is_exclusive PASSED [ 26%]
+tests/test_c02_operations.py::TestAvailability::test_is_read_only PASSED [ 27%]
+tests/test_c02_operations.py::TestConfirm::test_draft_becomes_confirmed_together_with_its_seats PASSED [ 28%]
+tests/test_c02_operations.py::TestConfirm::test_unknown_reservation_is_404 PASSED [ 29%]
+tests/test_c02_operations.py::TestConfirm::test_already_confirmed_is_409 PASSED [ 30%]
+tests/test_c02_operations.py::TestConfirm::test_cancelled_is_409 PASSED  [ 31%]
+tests/test_c02_operations.py::TestConfirm::test_expired_hold_is_409 PASSED [ 32%]
+tests/test_c02_operations.py::TestConfirm::test_expired_hold_reads_as_expired_and_holds_no_seats PASSED [ 33%]
+tests/test_c02_operations.py::TestConfirm::test_multi_seat_conflict_leaves_no_seat_confirmed PASSED [ 34%]
+tests/test_c02_operations.py::TestConfirm::test_two_simultaneous_confirms_on_one_seat_give_exactly_one_200 PASSED [ 35%]
+tests/test_c02_operations.py::TestConfirm::test_live_draft_at_the_start_instant_is_409 PASSED [ 36%]
+tests/test_c02_operations.py::TestCancel::test_draft_before_start_is_cancelled_and_row_is_kept PASSED [ 37%]
+tests/test_c02_operations.py::TestCancel::test_confirmed_before_start_is_cancelled_and_seats_are_free_again PASSED [ 37%]
+tests/test_c02_operations.py::TestCancel::test_unknown_reservation_is_404 PASSED [ 38%]
+tests/test_c02_operations.py::TestCancel::test_already_cancelled_is_409 PASSED [ 39%]
+tests/test_c02_operations.py::TestCancel::test_expired_is_409 PASSED     [ 40%]
+tests/test_c02_operations.py::TestCancel::test_confirmed_after_start_is_409 PASSED [ 41%]
+tests/test_c02_operations.py::TestCancel::test_draft_after_start_is_409 PASSED [ 42%]
+tests/test_c02_operations.py::TestCancel::test_cancel_at_the_exact_start_instant_is_409 PASSED [ 43%]
+tests/test_c02_operations.py::TestCancel::test_response_carries_cancelled_at PASSED [ 44%]
+tests/test_c02_operations.py::TestConfirmNeedingApproval::test_confirm_on_a_vip_seat_waits_for_a_decision PASSED [ 45%]
+tests/test_c02_operations.py::TestConfirmNeedingApproval::test_one_vip_seat_among_ordinary_ones_is_enough PASSED [ 46%]
+tests/test_c02_operations.py::TestConfirmNeedingApproval::test_ordinary_seats_still_confirm_straight_away PASSED [ 47%]
+tests/test_c02_operations.py::TestConfirmNeedingApproval::test_confirm_again_on_a_pending_reservation_is_409 PASSED [ 48%]
+tests/test_c02_operations.py::TestConfirmNeedingApproval::test_pending_seats_stay_occupied_far_past_the_15_minute_hold PASSED [ 49%]
+tests/test_c02_operations.py::TestConfirmNeedingApproval::test_pending_seats_cannot_be_taken_by_someone_else PASSED [ 50%]
+tests/test_c02_operations.py::TestConfirmNeedingApproval::test_vip_confirm_after_start_is_409_and_sends_no_notification PASSED [ 50%]
+tests/test_c02_operations.py::TestConfirmNeedingApproval::test_pending_reservation_of_a_started_screening_reads_as_expired_and_is_free PASSED [ 51%]
+tests/test_c02_operations.py::TestApprove::test_approve_confirms_the_reservation_and_its_seats PASSED [ 52%]
+tests/test_c02_operations.py::TestApprove::test_deciding_twice_is_409 PASSED [ 53%]
+tests/test_c02_operations.py::TestApprove::test_reject_frees_the_seats_and_keeps_the_row PASSED [ 54%]
+tests/test_c02_operations.py::TestApprove::test_unknown_reservation_is_404 PASSED [ 55%]
+tests/test_c02_operations.py::TestApprove::test_a_viewer_cannot_decide_403 PASSED [ 56%]
+tests/test_c02_operations.py::TestApprove::test_a_viewer_is_refused_before_the_state_is_checked PASSED [ 57%]
+tests/test_c02_operations.py::TestApprove::test_a_decision_without_a_caller_is_401 PASSED [ 58%]
+tests/test_c02_operations.py::TestApprove::test_the_cinema_manager_may_decide_too PASSED [ 59%]
+tests/test_c02_operations.py::TestApprove::test_decision_must_be_approve_or_reject PASSED [ 60%]
+tests/test_c02_operations.py::TestApprove::test_a_draft_cannot_be_decided PASSED [ 61%]
+tests/test_c02_operations.py::TestApprove::test_approval_after_the_screening_started_is_409_and_reads_expired PASSED [ 62%]
+tests/test_c02_operations.py::TestApprove::test_approval_that_collides_with_a_confirmed_seat_confirms_nothing PASSED [ 62%]
+tests/test_c02_operations.py::TestApprove::test_approve_and_cancel_arriving_together_always_end_cancelled PASSED [ 63%]
+tests/test_c02_operations.py::TestCancelPending::test_pending_can_be_cancelled_and_seats_are_free_again PASSED [ 64%]
+tests/test_c02_operations.py::TestCancelPending::test_rejected_cannot_be_cancelled PASSED [ 65%]
+tests/test_c05_transition.py::test_approve_writes_both_tables_and_commits PASSED [ 66%]
+tests/test_c05_transition.py::test_approve_that_loses_br02_changes_nothing PASSED [ 67%]
+tests/test_c05_transition.py::test_refused_command_leaves_the_reservation_untouched PASSED [ 68%]
+tests/test_c05_transition.py::test_a_decision_by_a_non_operator_leaves_the_reservation_untouched[VIEWER] PASSED [ 69%]
+tests/test_c05_transition.py::test_a_decision_by_a_non_operator_leaves_the_reservation_untouched[None] PASSED [ 70%]
+tests/test_c05_transition.py::test_confirm_of_an_expired_pending_reservation_names_expired PASSED [ 71%]
+tests/test_c05_transition.py::test_unknown_reservation_is_not_found PASSED [ 72%]
+tests/test_c09_pending_limit.py::test_tc_c08_01_approve_next_to_a_confirmed_seat_confirms_both PASSED [ 73%]
+tests/test_c09_pending_limit.py::test_tc_c08_02_approve_onto_an_already_confirmed_seat_is_409_and_writes_nothing PASSED [ 74%]
+tests/test_c09_pending_limit.py::test_tc_c09_01_confirm_records_the_approval_deadline PASSED [ 75%]
+tests/test_c09_pending_limit.py::test_tc_c09_02_approve_at_29_59_confirms PASSED [ 75%]
+tests/test_c09_pending_limit.py::test_tc_c09_03_approve_at_or_after_the_limit_is_409_and_confirms_nothing[30:00] PASSED [ 76%]
+tests/test_c09_pending_limit.py::test_tc_c09_03_approve_at_or_after_the_limit_is_409_and_confirms_nothing[30:01] PASSED [ 77%]
+tests/test_c09_pending_limit.py::test_tc_c09_04_reject_and_cancel_after_the_limit_are_409 PASSED [ 78%]
+tests/test_c09_pending_limit.py::test_tc_c09_05_pending_still_outlives_the_15_minute_draft_hold PASSED [ 79%]
+tests/test_c09_pending_limit.py::test_tc_c09_06_after_expiry_the_seat_can_be_sold_once_and_the_old_request_never_confirms PASSED [ 80%]
+tests/test_c09_pending_limit.py::test_tc_c09_07_upgrade_adds_the_column_and_expires_legacy_pending_rows PASSED [ 81%]
+tests/test_double_booking_spike.py::test_without_db_constraint_the_seat_is_sold_twice PASSED [ 82%]
+tests/test_double_booking_spike.py::test_with_db_constraint_the_seat_is_sold_once PASSED [ 83%]
+tests/test_lifecycle.py::test_plan_allows_exactly_the_edges_of_the_state_diagram PASSED [ 84%]
+tests/test_lifecycle.py::test_confirm_chooses_pending_approval_only_when_a_seat_needs_it PASSED [ 85%]
+tests/test_lifecycle.py::test_effective_state_boundaries_are_half_open PASSED [ 86%]
+tests/test_lifecycle.py::test_cancel_of_a_live_draft_after_the_start_is_refused_by_the_start_guard PASSED [ 87%]
+tests/test_lifecycle.py::test_refusal_names_the_derived_state[confirm] PASSED [ 87%]
+tests/test_lifecycle.py::test_refusal_names_the_derived_state[approve] PASSED [ 88%]
+tests/test_lifecycle.py::test_refusal_names_the_derived_state[reject] PASSED [ 89%]
+tests/test_lifecycle.py::test_confirm_of_a_live_draft_after_the_start_is_refused_by_the_start_guard PASSED [ 90%]
+tests/test_lifecycle.py::test_role_refusal_comes_before_the_state_refusal[approve] PASSED [ 91%]
+tests/test_lifecycle.py::test_role_refusal_comes_before_the_state_refusal[reject] PASSED [ 92%]
+tests/test_lifecycle.py::test_pending_approval_deadline_is_half_open_and_a_missing_deadline_is_expired PASSED [ 93%]
+tests/test_notifications.py::test_confirm_notifies_the_viewer_once PASSED [ 94%]
+tests/test_notifications.py::test_create_alone_does_not_notify PASSED    [ 95%]
+tests/test_notifications.py::test_vip_seat_notifies_saved_then_approved PASSED [ 96%]
+tests/test_notifications.py::test_rejection_is_notified PASSED           [ 97%]
+tests/test_notifications.py::test_new_movie_notifies_every_user PASSED   [ 98%]
+tests/test_notifications.py::test_only_the_cinema_manager_adds_movies PASSED [ 99%]
+tests/test_notifications.py::test_failed_notification_never_fails_the_reservation PASSED [100%]
+-------- generated xml file: /tmp/claude-0/clean/build/pytest-junit.xml --------
+============================= 108 passed in 12.00s =============================
+== frontend: npm ci, type check + build (src/frontend)
+== node:    v22.23.5
+added 114 packages in 4s
+> frontend@0.0.0 build
+> tsc -b && vite build
+vite v8.3.0 building client environment for production...
+transforming...
+✓ 1899 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.48 kB │ gzip:   0.30 kB
+dist/assets/index-B0BiLSbi.css   13.14 kB │ gzip:   3.58 kB
+dist/assets/index-Bllic-BH.js   314.70 kB │ gzip: 100.10 kB
+✓ built in 568ms
+== ALL CHECKS PASSED

@@ -528,3 +528,172 @@ a crash between commit and notify (C03, C05 risks); and BR-04 after a cancel: a 
 free seat (the rule is checked at create only, ADR-006), and from then on every create in that row that does
 not take the seat is refused — the formal definition ("no row touched may *contain* a run of length 1") says
 so, the rule's one-line wording ("must not *leave*") reads more narrowly.
+
+## After v0.3: roles (PR #15, `3b8f4bf`)
+
+PR #15 added the user roles `VIEWER`, `BOX_OFFICE`, `ADMIN` (`src/cinema/roles.py`, `users.role`, the
+`X-User-Id` header) and the demo-data top-up. OP-05's `403` is therefore implemented and tested
+(`TestApprove::test_a_viewer_cannot_decide_403`, `test_lifecycle.py` U7); the "Still open" line above about
+`403` is resolved. Still open: the owner check on confirm/cancel (a viewer can confirm or cancel someone
+else's reservation) and that login is by e-mail only. `3b8f4bf` with `python -m pytest -q` → **97 passed**
+(re-run 2026-11-24, Python 3.13.18, SQLite 3.53.1). This commit is the before baseline of CR-C08.
+
+---
+
+## C08 - Before baseline and TC-C08-01/02
+
+The Change Card is "C08 / CR-C08 Pending approval limit" in [`intent-and-change.md`](intent-and-change.md#c08--cr-c08-pending-approval-limit--controlled-change-card).
+
+| | |
+|---|---|
+| Baseline | `main` @ `3b8f4bf`; spec v0.3; schema `src/cinema/schema.sql` @ `3b8f4bf` (no `pending_until`); runtime Python 3.13.18, SQLite 3.53.1, Linux; test DB = a fresh SQLite file per test in pytest's `tmp_path` (isolated); no secrets |
+| Interval / time semantics | Seat exclusivity per `(screening, seat)` (ADR-004); all instants ISO-8601 UTC; the server clock is `cinema.main.now`, replaced in these tests by a controllable clock starting at `T0 = 2030-01-01T17:00:00Z`; the screening starts at `T0 + 3 h` so the start guard never decides |
+| Command | `python -m pytest -v tests/test_c09_pending_limit.py -k tc_c08` |
+| Persisted-state oracle | `committed(rid)` and `double_confirmed_seats()` read through a **new** SQLite connection (sees committed data only), independent of the API response |
+
+### C08 / TC-C08-01 — approve next to a confirmed seat
+
+Test basis: OP-05 (approve), BR-02, spec v0.3. Preconditions: hall 1, own screening, first row; ordinary
+seats; seats 3–4 of the row require approval; box office user from `seed.sql`.
+
+| # | Action / input | Expected BEFORE execution | Actual AFTER execution (`3b8f4bf` and `5984d13`) | Evidence |
+|---|---|---|---|---|
+| 1 | At `T0` viewer b1 creates + confirms seats 1–2 | `200 CONFIRMED` | `200 CONFIRMED` | test asserts |
+| 2 | At `T0` viewer b2 creates + confirms VIP seats 3–4 (adjacent, no shared seat) | `200 PENDING_APPROVAL`; committed `PENDING_APPROVAL` on both seat rows | as expected | `committed(b2)` |
+| 3 | At `T0 + 10:00` box office approves b2 | `200 CONFIRMED` | `200 CONFIRMED` | response |
+| 4 | New connection: read b1, b2 and duplicate CONFIRMED seats | b1 `CONFIRMED`; b2 `CONFIRMED`, `confirmed_at = T0+10:00`, both seats `CONFIRMED`; no seat confirmed twice | as expected | `committed`, `double_confirmed_seats() == []` |
+| 5 | Repeat | Each test builds a fresh DB file → same result | same result on every run (4 runs on 2026-11-24) | pytest |
+
+Verdict: **PASS** on `3b8f4bf` ([red-first log](evidence/c09/red-first-before-3b8f4bf.txt)) and on `5984d13`
+([clean-clone log](evidence/c09/check-clean-clone-5984d13.log)). Not covered: two concurrent approvals (that is
+`TestApprove::test_approve_and_cancel_arriving_together_always_end_cancelled` and the C05 C2 test).
+
+### C08 / TC-C08-02 — approve onto an already confirmed seat
+
+Test basis: OP-05 failure outcome "a seat is already `CONFIRMED` elsewhere → 409, nothing confirmed", BR-02,
+ADR-004. Preconditions: b2 `PENDING_APPROVAL` on VIP seats X, Y (made through the API at `T0`); then b1
+`CONFIRMED` on X, inserted directly (test setup: create would refuse X while b2 holds it).
+
+| # | Action / input | Expected BEFORE execution | Actual AFTER execution (`3b8f4bf` and `5984d13`) | Evidence |
+|---|---|---|---|---|
+| 1 | Prepare b2 (API) and b1 (direct insert) | only b1 is `CONFIRMED`; b2 pending | as expected | fixture |
+| 2 | At `T0 + 10:00` box office approves b2 | `409` (the unique index vetoes) | `409` | response |
+| 3 | New connection: read b1, b2 | b1 unchanged (`CONFIRMED`, `confirmed_at = T0`); b2 `PENDING_APPROVAL` on both seats, `confirmed_at` NULL; no seat confirmed twice | as expected | `committed`, `double_confirmed_seats() == []` |
+| 4 | Repeat | fresh DB → same result | same | pytest |
+
+Verdict: **PASS** on `3b8f4bf` and on `5984d13` (same logs).
+
+---
+
+## C09 - Integration, CI and Release Record
+
+**C08 Change Card link and reviewed ACCEPT / NO_CHANGE / REJECT rationale:**
+[CR-C08 Pending approval limit](intent-and-change.md#c08--cr-c08-pending-approval-limit--controlled-change-card) —
+**ACCEPT option A** (lazy expiry at a stored deadline, ADR-009): meets AC-01..AC-05 with the smallest delta and
+no new writer. Owner Š. Adámek. _Peer review of the decision: PLACEHOLDER (see below)._
+
+**Before commit/tag; after commit/tag:** before = `3b8f4bf` (`main`, PR #15). After = branch `c89`:
+`f11d937` (tests only, red first) → **`5984d13` (implementation, the release candidate code)** → the
+documentation commit on top of it (this file; no code change). Suggested tag after review: `c09-rc1` on the
+merge commit. Tree of `5984d13`: `2e8327e8a24ffd8a9a06d5cf881fc907ff1ce2e5`.
+
+**Affected claims and new AC, unchanged regression basis:** new AC-01..AC-05 (Change Card); changed claim:
+OP-05's verification example "stays `PENDING_APPROVAL` for hours" → "past the 15-minute hold, at most 30
+minutes". Unchanged: OP-01..OP-04, roles, BR-01..BR-04, notifications; TC-C08-01/02; all 97 tests of `3b8f4bf`.
+
+**Changed code/data/config/ADR and relevant N/A:**
+
+| Area | Change |
+|---|---|
+| `src/cinema/schema.sql` | `reservations.pending_until TEXT` (nullable) |
+| `src/cinema/db.py` | `add_pending_until()` — idempotent `ALTER TABLE` for older databases; called at startup in `main.py` |
+| `src/cinema/reservations.py` | `APPROVAL_LIMIT = 30 min`; `_change_state` writes `pending_until = at + 30 min` when the target is `PENDING_APPROVAL`; `_facts` passes it on |
+| `src/cinema/lifecycle.py` | `ReservationFacts.pending_until`; `effective_state`: pending with `pending_until <= at` or NULL → `EXPIRED` |
+| `src/cinema/availability.py` | "occupied" for pending also requires `pending_until > now` |
+| `src/frontend/.../seat-map-modal.tsx` | the pending message states the 30-minute limit |
+| Tests | new `tests/test_c09_pending_limit.py` (10); `test_lifecycle.py` U1 oracle + `in_time` dimension (640 → 1280 combinations), new U8; plant helpers in `test_c02_operations.py` / `test_c05_transition.py` write a deadline for pending rows (otherwise those tests would pass for the wrong reason: a NULL deadline now means expired) |
+| CI | new `scripts/check.sh`, `.github/workflows/ci.yml` |
+| Spec / design | spec v0.4 (OP-02, OP-03, OP-05, Definition of Occupied), `diagrams.md` v0.4 + sign-off list, ADR-009, ADR-003 note, C05 DD R1 / pseudocode / decision-table row 17, Project Frame, README |
+| N/A | no new endpoint, no new env var (limit is a constant — ADR-009), no worker/import/admin writer exists, notifications unchanged (nothing is sent at expiry), no change to roles |
+
+**Peer review: reviewer, challenged assumption, decision:** _PLACEHOLDER — NOT DONE YET. A second team
+member reviews the PR diff against AC-01..AC-05 (normal path, the exact 30:00 boundary, rejection path,
+persistence, the legacy-row policy, approve/expiry race) and records here: name, date, the assumption they
+challenged, and the disposition (approved / changes requested)._ Points the author asks the reviewer to
+challenge: (1) is "30:00 is already late" the behaviour the box office wants; (2) fail-closed for legacy
+pending rows on upgrade; (3) a request confirmed less than 30 min before the start still expires at the start.
+
+| Test ID | Accepted oracle | Exact command/data | Expected | Actual | PASS/FAIL/BLOCKED | Evidence |
+|---|---|---|---|---|---|---|
+| TC-C09-01 New: deadline recorded (AC-05) | Change Card AC-05 | `pytest tests/test_c09_pending_limit.py::test_tc_c09_01_confirm_records_the_approval_deadline`; VIP seats, confirm at `T0` | `pending_until = T0+30:00` in GET and in the DB | `2030-01-01T17:30:00Z` in both | PASS (FAIL on `3b8f4bf`: `KeyError 'pending_until'`) | [clean-clone log](evidence/c09/check-clean-clone-5984d13.log), [red-first](evidence/c09/red-first-before-3b8f4bf.txt) |
+| TC-C09-02 New: 29:59 (AC-01) | AC-01 | `::test_tc_c09_02_approve_at_29_59_confirms`; approve at `T0+29:59` | `200 CONFIRMED`; committed `CONFIRMED` both tables, `confirmed_at = T0+29:59` | as expected | PASS (also on `3b8f4bf`) | same |
+| TC-C09-03 New: 30:00 / 30:01 (AC-03, AC-02) | AC-02, AC-03 | `::test_tc_c09_03_...[30:00]`, `[30:01]` | `409 "Cannot approve a EXPIRED reservation"`; stored row stays `PENDING_APPROVAL`, `confirmed_at` NULL; GET `EXPIRED`; seats free; no double CONFIRMED | as expected | PASS (FAIL on `3b8f4bf`: `200`) | same |
+| TC-C09-04 New: reject/cancel after limit | BR-03 + AC-02 | `::test_tc_c09_04_...`; at `T0+30:00` | both `409`; stored `PENDING_APPROVAL` | as expected | PASS (FAIL on `3b8f4bf`) | same |
+| TC-C09-05 Regression: pending outlives the 15-min hold | OP-05 v0.2/v0.4 | `::test_tc_c09_05_...`; at `T0+20:00` | reads `PENDING_APPROVAL`, seats occupied, approve `200` | as expected | PASS (also on `3b8f4bf`) | same |
+| TC-C09-06 New/regression: BR-02 after expiry (AC-04) | AC-04, BR-02 | `::test_tc_c09_06_...`; second viewer at `T0+31:00` | newcomer `CONFIRMED`; late approve `409`; old row not CONFIRMED; no double CONFIRMED | as expected | PASS (FAIL on `3b8f4bf`: create `409`, seats still held) | same |
+| TC-C09-07 New: upgrade of a before-DB | Change Card data row | `::test_tc_c09_07_...`; DB without the column + a legacy pending row | startup adds the column; 2nd call `False`; legacy row reads `EXPIRED`; approve `409` | as expected | PASS | same |
+| C08 regression TC-01 | TC-C08-01 above | `-k tc_c08_01` | both `CONFIRMED`, no overlap | as expected | PASS (on `3b8f4bf` and `5984d13`) | same |
+| C08 regression TC-02 | TC-C08-02 above | `-k tc_c08_02` | `409`, nothing written | as expected | PASS (on `3b8f4bf` and `5984d13`) | same |
+| Full regression suite | specs v0.3/v0.4 | `./scripts/check.sh` | all pass | **108 passed** (97 before + 10 in `test_c09_pending_limit.py` + U8) | PASS | same |
+| Unit: lifecycle oracle U1 + U8 | state diagram v0.4 | `pytest tests/test_lifecycle.py` | 1280/1280 combinations as the diagram; 30:00 expired, NULL expired | as expected | PASS | same |
+| Smoke on a real server + before-DB | Change Card data row | [smoke-migration.txt](evidence/c09/smoke-migration.txt), [smoke.py](evidence/c09/smoke.py) | column added at startup; confirm writes `pending_until = now+30 min`; after the deadline GET `EXPIRED`, approve `409`, row not CONFIRMED | as expected (`10:03:24Z` → `10:33:24Z`) | PASS | smoke log |
+| Script fails when the code is wrong | — | limit set to 31 min in a scratch copy, `SKIP_FRONTEND=1 ./scripts/check.sh` | exit ≠ 0 | exit 1, 4 failed | PASS | [mutation-check.txt](evidence/c09/mutation-check.txt) |
+| Approve vs expiry race at the exact instant | — | — | — | — | NOT RUN — both are decided inside one `BEGIN IMMEDIATE` transaction with one `at`, so there is no separate expiry write to race with; not tested by a dedicated test | — |
+| Windows run (`start.ps1`) | R-01 | — | — | — | NOT RUN (no Windows machine in this run) | — |
+
+**Real integration boundary and post-commit state check:** FastAPI `TestClient` → `cinema.main` →
+`reservations` → a real SQLite file (WAL, `BEGIN IMMEDIATE`, the real unique index); no mocked repository. Only
+the clock is replaced. Every state verdict is read through a new connection (`committed()`,
+`double_confirmed_seats()`), so it sees committed data only. In addition the smoke check ran a real `uvicorn`
+server over HTTP against a database created by the before code.
+
+**Dependency lock + runtime + DB schema + nonsecret config:** Python 3.13.18 (project requires ≥ 3.11),
+SQLite 3.53.1, Node v22.23.5 / npm 10.9.9. Backend dependencies are **not pinned** except `pytest==8.3.4`
+(`requirements.txt` says `fastapi[standard]>=0.115`); the versions resolved in this run, recorded by the
+script in `build/pip-freeze.txt`: fastapi 0.165.0, starlette 1.10.0, pydantic 2.14.4, uvicorn 0.54.0, httpx
+0.28.1. Frontend: `src/frontend/package-lock.json` (sha256 `1839780e…0b94`; vite 8.3.0, typescript 6.0.3).
+Schema: `src/cinema/schema.sql` sha256 `a94e7fea…3f73` + startup upgrades `add_roles`, `add_pending_until`.
+Config: `CINEMA_DB` (path of the SQLite file, optional); no secrets exist.
+
+**Clean checkout/build/test/run commands and environment:** see README "Running what exists today" and
+"Clean checkout". In short: `git clone … && git checkout c89 && ./scripts/check.sh`, then
+`./.venv/bin/uvicorn cinema.main:app --app-dir src` and `GET /health`.
+
+**CI job or automated local script, observed result/log link:** `scripts/check.sh` (one command: venv +
+dependencies, all backend tests with JUnit report, `npm ci` + `npm run build`). Run by the author on a
+**fresh clone of `5984d13`** on 2026-11-24 (Linux, Python 3.13.18): exit 0, 108 passed, frontend built —
+[log](evidence/c09/check-clean-clone-5984d13.log). GitHub Actions workflow `.github/workflows/ci.yml` runs the
+same script on every push and PR. **First CI run (GitHub Actions, ubuntu-latest, Python 3.13), 2026-11-24:
+FAIL — 1 failed, 107 passed.** `TC-C09-07` failed with `sqlite3.OperationalError: error in table reservations
+after drop column: incomplete input`. Cause: the test builds a "before" database with `ALTER TABLE reservations
+DROP COLUMN pending_until`, and the runner's SQLite (older than the 3.53.1 used locally) cannot rewrite the
+table definition when a `--` comment line stands directly before the dropped column. Reproduced locally with
+SQLite 3.51.1 (`pysqlite3-binary`); the product code was not affected (a real old database never drops the
+column). Fix: the column comment in `schema.sql` moved above `CREATE TABLE reservations`; with it the drop works
+on 3.51.1 and the suite gives 108 passed. A finding of the CI run, not of the change itself: our local runs
+used one SQLite version only. _Record the URL and result of the re-run here._
+
+**Independent reproducer, steps, actual result and any hidden fix:** _PLACEHOLDER — NOT DONE YET. A second
+team member (not the author) clones the repository into a new directory, checks out `c89` (or the merge
+commit), follows only README "Clean checkout", and records here: name, date, OS, Python/Node version, the
+exact commands, the observed result (expected: exit 0, 108 passed, frontend built, `/health` ok), and any
+step that needed an undocumented fix. The author's own fresh-clone run above does **not** count as this step._
+
+**Artifact identity/file/hash/tag and migration assumptions:** the product is run from source, so its
+identity is the commit + tree: `5984d13`, tree `2e8327e8a24ffd8a9a06d5cf881fc907ff1ce2e5`;
+`git archive --format=tar.gz 5984d13 | sha256sum` = `9cfa16fa28dd21d60ecb25c7e66c0f11dcd102f3b252e5a8fbc42e2d2ee51bf2`
+(git 2.x on Linux). The frontend bundle is built by `npm run build` into `src/frontend/dist/` (not committed).
+Migration: on startup an existing `cinema.sqlite3` gains `pending_until` (nullable); no data is rewritten.
+
+**Recovery/rollback limitation and remaining risks:** rolling back to `3b8f4bf` keeps working on a migrated
+database (the old code ignores the extra column), but data interpretation changes back: pending requests the
+new code treated as expired become live again until their screening starts. Rolling forward again expires
+every pending row whose `pending_until` is past or NULL. Remaining risks: legacy pending rows expire on
+upgrade (demo data has none — the seeder writes only `CONFIRMED`); nobody is notified at expiry; backend
+dependencies are not pinned (R-01); the limit is a code constant; owner check on confirm/cancel still missing.
+
+**Release candidate decision READY/CONDITIONAL/HOLD, owner, rationale:** **CONDITIONAL** — owner Š. Adámek,
+2026-11-24. All accepted AC and the regression suite pass on a clean clone, through a real SQLite boundary,
+with committed-state reads. Conditions before READY: (1) peer review of the diff recorded above;
+(2) independent clean checkout by a second member recorded above; (3) the GitHub Actions run green on the
+pushed branch; (4) team sign-off of spec v0.4 in `diagrams.md`. If any of them fails, the decision becomes HOLD.

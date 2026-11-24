@@ -1,0 +1,16 @@
+# Smoke + migration check, 2026-11-24 ~10:03 UTC
+# 1) demo DB created by the BEFORE code (3b8f4bf): PYTHONPATH=src python -m cinema.main with CINEMA_DB=smoke.sqlite3
+before cols: ['created_at', 'confirmed_at', 'cancelled_at']
+# 2) AFTER code (working tree = 5984d13) started on that DB: CINEMA_DB=smoke.sqlite3 uvicorn cinema.main:app --app-dir src --port 8077
+after startup cols: ['confirmed_at', 'cancelled_at', 'pending_until']
+# 3) real HTTP calls (urllib) against the running server; the 30 minutes are simulated by moving pending_until to 'now' in the smoke DB
+create 201 {'reservation_id': 1495, 'state': 'DRAFT', 'hold_until': '2026-11-24T10:18:24Z'}
+confirm (200, {'reservation_id': 1495, 'state': 'PENDING_APPROVAL'})
+db row ('PENDING_APPROVAL', '2026-11-24T10:33:24Z') server now ~ 2026-11-24T10:03:24Z
+GET after deadline EXPIRED
+approve after deadline (409, {'detail': 'Cannot approve a EXPIRED reservation'})
+db row after ('PENDING_APPROVAL', None)
+# uvicorn access log (excerpt)
+INFO:     127.0.0.1:56140 - "POST /reservations/1495/confirm HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56152 - "GET /reservations/1495 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56166 - "POST /reservations/1495/decision HTTP/1.1" 409 Conflict

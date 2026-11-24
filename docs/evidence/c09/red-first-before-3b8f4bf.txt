@@ -1,0 +1,32 @@
+# Red-first run: tests/test_c09_pending_limit.py (from f11d937) copied onto the BEFORE baseline 3b8f4bf, 2026-11-24
+# command: python -m pytest -v tests/test_c09_pending_limit.py   (Python 3.13.18, SQLite 3.53.1)
+# expected before: TC-C08-01/02, TC-C09-02 (29:59) and TC-C09-05 pass (old behaviour already true); the other 6 fail
+tests/test_c09_pending_limit.py::test_tc_c08_01_approve_next_to_a_confirmed_seat_confirms_both PASSED [ 10%]
+tests/test_c09_pending_limit.py::test_tc_c08_02_approve_onto_an_already_confirmed_seat_is_409_and_writes_nothing PASSED [ 20%]
+tests/test_c09_pending_limit.py::test_tc_c09_01_confirm_records_the_approval_deadline FAILED [ 30%]
+tests/test_c09_pending_limit.py::test_tc_c09_02_approve_at_29_59_confirms PASSED [ 40%]
+tests/test_c09_pending_limit.py::test_tc_c09_03_approve_at_or_after_the_limit_is_409_and_confirms_nothing[30:00] FAILED [ 50%]
+tests/test_c09_pending_limit.py::test_tc_c09_03_approve_at_or_after_the_limit_is_409_and_confirms_nothing[30:01] FAILED [ 60%]
+tests/test_c09_pending_limit.py::test_tc_c09_04_reject_and_cancel_after_the_limit_are_409 FAILED [ 70%]
+tests/test_c09_pending_limit.py::test_tc_c09_05_pending_still_outlives_the_15_minute_draft_hold PASSED [ 80%]
+tests/test_c09_pending_limit.py::test_tc_c09_06_after_expiry_the_seat_can_be_sold_once_and_the_old_request_never_confirms FAILED [ 90%]
+tests/test_c09_pending_limit.py::test_tc_c09_07_upgrade_adds_the_column_and_expires_legacy_pending_rows FAILED [100%]
+E       KeyError: 'pending_until'
+E       assert 200 == 409
+E        +  where 200 = <Response [200 OK]>.status_code
+E       assert 200 == 409
+E        +  where 200 = <Response [200 OK]>.status_code
+E       AssertionError: assert 200 == 409
+E        +  where 200 = <Response [200 OK]>.status_code
+E        +    where <Response [200 OK]> = decide(<starlette.testclient.TestClient object at 0x7f9a82f8b680>, 1650, 'reject')
+E       AssertionError: {"detail":"Seats already taken: [1, 2]"}
+E       assert 409 == 201
+E        +  where 409 = <Response [409 Conflict]>.status_code
+E           sqlite3.OperationalError: no such column: "pending_until"
+FAILED tests/test_c09_pending_limit.py::test_tc_c09_01_confirm_records_the_approval_deadline
+FAILED tests/test_c09_pending_limit.py::test_tc_c09_03_approve_at_or_after_the_limit_is_409_and_confirms_nothing[30:00]
+FAILED tests/test_c09_pending_limit.py::test_tc_c09_03_approve_at_or_after_the_limit_is_409_and_confirms_nothing[30:01]
+FAILED tests/test_c09_pending_limit.py::test_tc_c09_04_reject_and_cancel_after_the_limit_are_409
+FAILED tests/test_c09_pending_limit.py::test_tc_c09_06_after_expiry_the_seat_can_be_sold_once_and_the_old_request_never_confirms
+FAILED tests/test_c09_pending_limit.py::test_tc_c09_07_upgrade_adds_the_column_and_expires_legacy_pending_rows
+========================= 6 failed, 4 passed in 1.27s ==========================

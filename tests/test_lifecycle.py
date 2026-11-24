@@ -2,7 +2,9 @@
 
 Derived from the Detailed Design in docs/architecture-and-decisions.md ("C05 - Detailed Design"); the ids
 U1-U5 are those of the table in docs/evidence-and-evolution.md ("C05 DD Verification Evidence"); U6 was
-added with spec v0.3 ("Change after C05: Confirm is start-guarded (v0.3)" in the same file).
+added with spec v0.3 ("Change after C05: Confirm is start-guarded (v0.3)" in the same file); U8 and the
+`in_time` dimension of U1 with spec v0.4 (CR-C08, pending approval limit; "C09 - Integration, CI and Release
+Record" in the same file).
 """
 
 from __future__ import annotations
@@ -23,12 +25,14 @@ ROLES = [None, *Role]  # None: a caller who did not say who they are
 OPERATOR = Role.BOX_OFFICE
 
 
-def facts(state="DRAFT", held=True, started=False, needs_approval=False) -> ReservationFacts:
+def facts(state="DRAFT", held=True, started=False, needs_approval=False, in_time=True) -> ReservationFacts:
+    """`in_time`: the approval deadline (CR-C08) has not been reached - only meaningful for PENDING_APPROVAL."""
     return ReservationFacts(
         stored_state=state,
         hold_until=LATER if held else EARLIER,
         starts_at=EARLIER if started else LATER,
         needs_approval=needs_approval,
+        pending_until=(LATER if in_time else EARLIER) if state == "PENDING_APPROVAL" else None,
     )
 
 
@@ -37,10 +41,10 @@ def may_issue(command, role) -> bool:
     return command not in (Command.APPROVE, Command.REJECT) or role in (Role.BOX_OFFICE, Role.ADMIN)
 
 
-def diagram_edge(command, state, held, started, needs_approval) -> Transition | None:
-    """The C02 state diagram (docs/diagrams.md section 2), written out independently of TRANSITIONS."""
+def diagram_edge(command, state, held, started, needs_approval, in_time) -> Transition | None:
+    """The state diagram (docs/diagrams.md section 2, v0.4), written out independently of TRANSITIONS."""
     draft_alive = state == "DRAFT" and held
-    pending_alive = state == "PENDING_APPROVAL" and not started
+    pending_alive = state == "PENDING_APPROVAL" and not started and in_time  # v0.4: approval limit not reached
     if command == Command.CONFIRM and draft_alive and not started:
         return Transition("PENDING_APPROVAL", None) if needs_approval else Transition("CONFIRMED", "confirmed_at")
     if command == Command.APPROVE and pending_alive:
@@ -54,12 +58,14 @@ def diagram_edge(command, state, held, started, needs_approval) -> Transition | 
 
 # U1 - interface contract of plan; TRANSITIONS equals the state diagram and the use cases' actors
 def test_plan_allows_exactly_the_edges_of_the_state_diagram():
-    combinations = list(itertools.product(Command, STORED_STATES, [True, False], [True, False], [True, False], ROLES))
-    assert len(combinations) == 640
-    for command, state, held, started, needs_approval, role in combinations:
-        result = plan(command, facts(state, held, started, needs_approval), AT, role)  # must not raise
-        expected = diagram_edge(command, state, held, started, needs_approval)
-        case = (command, state, held, started, needs_approval, role)
+    combinations = list(
+        itertools.product(Command, STORED_STATES, [True, False], [True, False], [True, False], [True, False], ROLES)
+    )
+    assert len(combinations) == 1280
+    for command, state, held, started, needs_approval, in_time, role in combinations:
+        result = plan(command, facts(state, held, started, needs_approval, in_time), AT, role)  # must not raise
+        expected = diagram_edge(command, state, held, started, needs_approval, in_time)
+        case = (command, state, held, started, needs_approval, in_time, role)
         if not may_issue(command, role):
             assert isinstance(result, Forbidden), case
         elif expected is None:
@@ -80,8 +86,8 @@ def test_effective_state_boundaries_are_half_open():
     one_second_later = "2030-01-01T17:00:01Z"
     assert effective_state(ReservationFacts("DRAFT", AT, LATER, False), AT) == "EXPIRED"
     assert effective_state(ReservationFacts("DRAFT", one_second_later, LATER, False), AT) == "DRAFT"
-    assert effective_state(ReservationFacts("PENDING_APPROVAL", EARLIER, AT, False), AT) == "EXPIRED"
-    assert effective_state(ReservationFacts("PENDING_APPROVAL", EARLIER, one_second_later, False), AT) == "PENDING_APPROVAL"
+    assert effective_state(ReservationFacts("PENDING_APPROVAL", EARLIER, AT, False, LATER), AT) == "EXPIRED"
+    assert effective_state(ReservationFacts("PENDING_APPROVAL", EARLIER, one_second_later, False, LATER), AT) == "PENDING_APPROVAL"
     for state in ["CONFIRMED", "CANCELLED", "REJECTED"]:  # no hold, no expiry
         assert effective_state(facts(state, held=False, started=True), AT) == state
 
@@ -112,3 +118,15 @@ def test_confirm_of_a_live_draft_after_the_start_is_refused_by_the_start_guard()
 def test_role_refusal_comes_before_the_state_refusal(command):
     assert isinstance(plan(command, facts("CANCELLED"), AT, Role.VIEWER), Forbidden)
     assert isinstance(plan(command, facts("CANCELLED"), AT, OPERATOR), Refused)
+
+
+# U8 - R1 for the approval deadline (CR-C08, spec v0.4): half-open like the hold, and fail-closed without one
+def test_pending_approval_deadline_is_half_open_and_a_missing_deadline_is_expired():
+    one_second_later = "2030-01-01T17:00:01Z"
+    assert effective_state(ReservationFacts("PENDING_APPROVAL", EARLIER, LATER, True, one_second_later), AT) == "PENDING_APPROVAL"
+    assert effective_state(ReservationFacts("PENDING_APPROVAL", EARLIER, LATER, True, AT), AT) == "EXPIRED"  # exactly 30:00
+    assert effective_state(ReservationFacts("PENDING_APPROVAL", EARLIER, LATER, True, EARLIER), AT) == "EXPIRED"
+    assert effective_state(ReservationFacts("PENDING_APPROVAL", EARLIER, LATER, True, None), AT) == "EXPIRED"  # legacy row
+    assert plan(Command.APPROVE, facts("PENDING_APPROVAL", in_time=False), AT, OPERATOR) == Refused(
+        "Cannot approve a EXPIRED reservation"
+    )

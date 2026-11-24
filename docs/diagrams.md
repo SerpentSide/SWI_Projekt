@@ -5,9 +5,10 @@ Three views of the same minimum system, all drawn from
 diagram and the text disagree, the text wins and the diagram is a bug). Mermaid, so GitHub
 renders them and they diff as text.
 
-These are the **v0.3** diagrams: the v0.2 approval change (see [`c02-change-impact.md`](c02-change-impact.md))
-plus v0.3's start guard on confirm. Elements added by v0.2 are marked *(v0.2)* in the text and drawn with a
-dashed line where the diagram type allows it; v0.3 changed two guards and one decision, marked *(v0.3)*.
+These are the **v0.4** diagrams: the v0.2 approval change (see [`c02-change-impact.md`](c02-change-impact.md)),
+v0.3's start guard on confirm, and v0.4's 30-minute approval limit (CR-C08). Elements added by v0.2 are marked *(v0.2)* in the text and drawn with a
+dashed line where the diagram type allows it; v0.3 changed two guards and one decision, marked *(v0.3)*; v0.4
+added the `pending_until` guard to approve, reject and cancel of a pending request and to "occupied", marked *(v0.4)*.
 The v0.1 diagrams are the same file at commit `1a7e2e6`.
 
 **Baseline status: Specification Baseline v0.1 and v0.2 — approved by the team (2026-10-13).** Each member ticked the box after reading the spec, `c02-review.md`, `c02-change-impact.md` and these diagrams.
@@ -20,6 +21,15 @@ The v0.1 diagrams are the same file at commit `1a7e2e6`.
 **Specification Baseline v0.3 — confirm is refused once the screening has started (2026-10-20).** Each member
 ticks the box after reading OP-03 and BR-01/BR-03 in the spec and "Change after C05: Confirm is start-guarded
 (v0.3)" in `evidence-and-evolution.md`.
+
+- [ ] Jan Procházka
+- [ ] Jiří Ševeček
+- [ ] Šimon Adámek
+- [ ] Stanislav Urban
+
+**Specification Baseline v0.4 — a pending approval expires after 30 minutes (CR-C08, implemented on branch
+`c89`, 2026-11-24).** Each member ticks the box after reading the CR-C08 Change Card in `intent-and-change.md`,
+OP-03/OP-05 *(v0.4)* in the spec, and "C09 - Integration, CI and Release Record" in `evidence-and-evolution.md`.
 
 - [ ] Jan Procházka
 - [ ] Jiří Ševeček
@@ -74,29 +84,31 @@ flowchart LR
 ## 2. Reservation lifecycle — state diagram
 
 `EXPIRED` is **derived, not stored**: a `DRAFT` whose `hold_until` has passed, or a
-`PENDING_APPROVAL` whose screening has started, *reads as* `EXPIRED` (ADR-003). Guards use the
-half-open conventions of BR-01: `now < starts_at`, `hold_until > now`.
+`PENDING_APPROVAL` whose screening has started or *(v0.4)* whose `pending_until` (confirm instant + 30 min)
+has been reached, *reads as* `EXPIRED` (ADR-003). Guards use the
+half-open conventions of BR-01: `now < starts_at`, `hold_until > now`, `pending_until > now`.
 
 ```mermaid
 stateDiagram-v2
     [*] --> DRAFT: create [screening not started, seats free, no orphan]
     DRAFT --> CONFIRMED: confirm [hold_until > now, now < starts_at (v0.3), no seat needs approval, no seat already CONFIRMED elsewhere]
     DRAFT --> PENDING_APPROVAL: confirm [hold_until > now, now < starts_at (v0.3), a seat needs approval] (v0.2)
-    PENDING_APPROVAL --> CONFIRMED: approve [now < starts_at, no seat already CONFIRMED elsewhere] (v0.2)
-    PENDING_APPROVAL --> REJECTED: reject [now < starts_at] (v0.2)
+    PENDING_APPROVAL --> CONFIRMED: approve [now < starts_at, pending_until > now (v0.4), no seat already CONFIRMED elsewhere] (v0.2)
+    PENDING_APPROVAL --> REJECTED: reject [now < starts_at, pending_until > now (v0.4)] (v0.2)
     DRAFT --> CANCELLED: cancel [now < starts_at]
-    PENDING_APPROVAL --> CANCELLED: cancel [now < starts_at] (v0.2)
+    PENDING_APPROVAL --> CANCELLED: cancel [now < starts_at, pending_until > now (v0.4)] (v0.2)
     CONFIRMED --> CANCELLED: cancel [now < starts_at]
     DRAFT --> EXPIRED: hold_until <= now (derived, no operation)
-    PENDING_APPROVAL --> EXPIRED: now >= starts_at (derived, no operation) (v0.2)
+    PENDING_APPROVAL --> EXPIRED: now >= starts_at (v0.2) or now >= pending_until (v0.4) (derived, no operation)
     CANCELLED --> [*]
     EXPIRED --> [*]
     REJECTED --> [*]
 
     note right of PENDING_APPROVAL
         Occupied (seats stay blocked) and not on the
-        15-minute hold clock: it can wait until the
-        screening starts.
+        15-minute hold clock: it can wait 30 minutes
+        from confirm (pending_until, v0.4), or until
+        the screening starts if that comes first.
     end note
 
     note right of EXPIRED
@@ -144,7 +156,7 @@ flowchart TD
     start([GET /screenings/id/availability]) --> s{screening exists?}
     s -- no --> e404[/404/]
     s -- yes --> load[load every seat of the screening's hall]
-    load --> loop[for each seat: occupied if CONFIRMED,<br/>or DRAFT with hold_until > now,<br/>or PENDING_APPROVAL with now < starts_at]
+    load --> loop[for each seat: occupied if CONFIRMED,<br/>or DRAFT with hold_until > now,<br/>or PENDING_APPROVAL with now < starts_at<br/>and pending_until > now v0.4]
     loop --> ok([200 seat map, nothing written])
 ```
 
@@ -162,7 +174,7 @@ flowchart TD
     hold -- yes --> st{now < starts_at?<br/>v0.3}
     st -- no --> e409d[/409 screening started/]
     st -- yes --> ap{does any seat<br/>require approval?}
-    ap -- yes --> pend[UPDATE reservation AND all its seats<br/>to PENDING_APPROVAL]
+    ap -- yes --> pend[UPDATE reservation AND all its seats<br/>to PENDING_APPROVAL<br/>set pending_until = now + 30 min v0.4]
     pend --> commitp[COMMIT]
     commitp --> notifyp[NotificationService.reservation_pending_approval<br/>outcome ignored]
     notifyp --> okp([200 PENDING_APPROVAL])
@@ -205,7 +217,9 @@ flowchart TD
     d -- no --> e409a[/409 invalid state<br/>covers deciding twice and losing to Cancel/]
     d -- yes --> t{now < starts_at?}
     t -- no --> e409b[/409 approval expired/]
-    t -- yes --> which{decision}
+    t -- yes --> lim{pending_until > now?<br/>v0.4}
+    lim -- no --> e409c[/409 approval expired<br/>nothing written/]
+    lim -- yes --> which{decision}
     which -- reject --> rej[UPDATE reservation AND all its seats to REJECTED]
     rej --> commitr[COMMIT]
     commitr --> notifyr[NotificationService.reservation_rejected<br/>outcome ignored]
@@ -240,10 +254,13 @@ Each edge of the state diagram, traced to the text and to an executed test
 | one winner among concurrent confirms | BR-02, OP-03 | `TestConfirm::test_two_simultaneous_confirms_on_one_seat_give_exactly_one_200` |
 | confirm is all-or-nothing | OP-03 | `TestConfirm::test_multi_seat_conflict_leaves_no_seat_confirmed` |
 | `DRAFT → PENDING_APPROVAL` *(v0.2)* | OP-03 variant | `TestConfirmNeedingApproval::test_confirm_on_a_vip_seat_waits_for_a_decision`, `::test_one_vip_seat_among_ordinary_ones_is_enough`, `::test_ordinary_seats_still_confirm_straight_away` |
-| pending seats read `occupied` for hours *(v0.2)* | OP-02, OP-05 | `TestConfirmNeedingApproval::test_pending_seats_stay_occupied_far_past_the_15_minute_hold`, `::test_pending_seats_cannot_be_taken_by_someone_else` |
+| pending seats read `occupied` past the 15-minute hold *(v0.2)* | OP-02, OP-05 | `TestConfirmNeedingApproval::test_pending_seats_stay_occupied_far_past_the_15_minute_hold`, `::test_pending_seats_cannot_be_taken_by_someone_else` |
 | `PENDING_APPROVAL → CONFIRMED` *(v0.2)* | OP-05 | `TestApprove::test_approve_confirms_the_reservation_and_its_seats`, `::test_deciding_twice_is_409`, `::test_approval_that_collides_with_a_confirmed_seat_confirms_nothing` |
 | `PENDING_APPROVAL → REJECTED`, seats freed *(v0.2)* | OP-05 | `TestApprove::test_reject_frees_the_seats_and_keeps_the_row`, `TestCancelPending::test_rejected_cannot_be_cancelled` |
 | `PENDING_APPROVAL → CANCELLED` *(v0.2)* | OP-04 | `TestCancelPending::test_pending_can_be_cancelled_and_seats_are_free_again` |
 | `PENDING_APPROVAL → EXPIRED` at `starts_at` *(v0.2)* | OP-05 | `TestApprove::test_approval_after_the_screening_started_is_409_and_reads_expired`, `TestConfirmNeedingApproval::test_pending_reservation_of_a_started_screening_reads_as_expired_and_is_free` |
+| `PENDING_APPROVAL → EXPIRED` at `pending_until` (29:59 approves; 30:00 and 30:01 refused, nothing confirmed) *(v0.4)* | OP-05, CR-C08 AC-01..AC-03 | `test_c09_pending_limit.py::test_tc_c09_02_approve_at_29_59_confirms`, `::test_tc_c09_03_approve_at_or_after_the_limit_is_409_and_confirms_nothing[30:00]`, `[30:01]`, `test_lifecycle.py::test_pending_approval_deadline_is_half_open_and_a_missing_deadline_is_expired` |
+| no arrow out of a pending request that expired by the limit *(v0.4)* | BR-03, CR-C08 | `test_c09_pending_limit.py::test_tc_c09_04_reject_and_cancel_after_the_limit_are_409` |
+| BR-02 still holds after an expiry: the seat is sold once *(v0.4)* | BR-02, CR-C08 AC-04 | `test_c09_pending_limit.py::test_tc_c09_06_after_expiry_the_seat_can_be_sold_once_and_the_old_request_never_confirms` |
 | approve versus cancel race: always ends `CANCELLED` *(v0.2)* | OP-05 | `TestApprove::test_approve_and_cancel_arriving_together_always_end_cancelled` |
 | non-operator decision → `403` *(v0.2)* | OP-05 | `TestApprove::test_a_viewer_cannot_decide_403`, `::test_a_viewer_is_refused_before_the_state_is_checked`, `::test_a_decision_without_a_caller_is_401` |

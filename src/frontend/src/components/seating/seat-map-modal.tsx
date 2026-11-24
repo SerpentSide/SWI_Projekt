@@ -115,7 +115,7 @@ export function SeatMapModal({ title, subtitle, screeningId, onClose }: SeatMapM
     ? serverError
     : reserved
       ? awaitingApproval
-        ? 'Rezervace čeká na schválení pokladnou - sedadla jsou zatím držena.'
+        ? 'Rezervace čeká na schválení pokladnou - sedadla jsou držena nejvýše 30 minut, pak žádost vyprší.'
         : `Rezervace potvrzena (${selectedSeats.size} ${selectedSeats.size === 1 ? 'sedadlo' : 'sedadla'}).`
       : invalidRows.length > 0
         ? `Tento výběr by nechal osamocené volné sedadlo v řadě ${invalidRows.join(', ')} - uprav výběr, než budeš moct rezervovat.`

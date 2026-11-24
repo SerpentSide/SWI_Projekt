@@ -86,12 +86,16 @@ def create(client, user_id, screening_id, seat_ids):
 
 
 def plant(screening_id, user_id, seat_ids, state="DRAFT", hold_until=None) -> int:
-    """Insert a reservation directly, bypassing the API - reaches states create() refuses."""
+    """Insert a reservation directly, bypassing the API - reaches states create() refuses.
+
+    A PENDING_APPROVAL row gets the approval deadline confirm would have written (now + 30 min, CR-C08), so
+    a test that is about something else is not decided by a missing deadline."""
+    pending_until = utc(timedelta(minutes=30)) if state == "PENDING_APPROVAL" else None
     conn = connect()
     try:
         rid = conn.execute(
-            "INSERT INTO reservations (user_id, screening_id, state, hold_until) VALUES (?, ?, ?, ?)",
-            (user_id, screening_id, state, hold_until or utc(timedelta(minutes=15))),
+            "INSERT INTO reservations (user_id, screening_id, state, hold_until, pending_until) VALUES (?, ?, ?, ?, ?)",
+            (user_id, screening_id, state, hold_until or utc(timedelta(minutes=15)), pending_until),
         ).lastrowid
         conn.executemany(
             "INSERT INTO reservation_seats (reservation_id, seat_id, screening_id, state) VALUES (?, ?, ?, ?)",
