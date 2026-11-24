@@ -43,11 +43,13 @@ def seats(db, n=2) -> list[int]:
 
 
 def plant(db, screening_id, seat_ids, state, hold_until="2030-01-01T17:15:00Z") -> int:
-    """Insert a reservation in a given state directly (test setup, not a lifecycle write)."""
+    """Insert a reservation in a given state directly (test setup, not a lifecycle write). A PENDING_APPROVAL
+    row gets an approval deadline (CR-C08) after BEFORE_START, as if confirmed at 16:50."""
     user_id = db.execute("SELECT id FROM users LIMIT 1").fetchone()["id"]
+    pending_until = "2030-01-01T17:20:00Z" if state == "PENDING_APPROVAL" else None
     rid = db.execute(
-        "INSERT INTO reservations (user_id, screening_id, state, hold_until) VALUES (?, ?, ?, ?)",
-        (user_id, screening_id, state, hold_until),
+        "INSERT INTO reservations (user_id, screening_id, state, hold_until, pending_until) VALUES (?, ?, ?, ?, ?)",
+        (user_id, screening_id, state, hold_until, pending_until),
     ).lastrowid
     db.executemany(
         "INSERT INTO reservation_seats (reservation_id, seat_id, screening_id, state) VALUES (?, ?, ?, ?)",

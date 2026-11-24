@@ -79,6 +79,21 @@ def add_roles(path: Path | None = None) -> bool:
         conn.close()
 
 
+def add_pending_until(path: Path | None = None) -> bool:
+    """CR-C08 (v0.4) schema upgrade of a database created before the approval limit: add the nullable
+    `reservations.pending_until` column. Rows are not touched: a legacy PENDING_APPROVAL row keeps NULL and so
+    reads EXPIRED (lifecycle.effective_state, fail-closed). Idempotent; returns whether it changed anything."""
+    conn = connect(path)
+    try:
+        if any(col["name"] == "pending_until" for col in conn.execute("PRAGMA table_info(reservations)")):
+            return False
+        with write_tx(conn):
+            conn.execute("ALTER TABLE reservations ADD COLUMN pending_until TEXT")
+        return True
+    finally:
+        conn.close()
+
+
 def top_up_screenings(path: Path | None = None) -> int:
     """Keep a long-lived demo database usable without wiping it.
 

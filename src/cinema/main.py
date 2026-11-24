@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from cinema import availability, notifications, reservations
-from cinema.db import DB_PATH, add_roles, connect, now, reset_db, top_up_screenings, write_tx  # noqa: F401  (DB_PATH, reset_db: `python -m cinema.main`)
+from cinema.db import DB_PATH, add_pending_until, add_roles, connect, now, reset_db, top_up_screenings, write_tx  # noqa: F401  (DB_PATH, reset_db: `python -m cinema.main`)
 from cinema.roles import Role
 from cinema.seed import TZ, iso
 
@@ -30,7 +30,7 @@ from cinema.seed import TZ, iso
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """Create and seed the database on first start; later, add what an older database lacks: the role
-    column and staff accounts, and screenings when the schedule runs out."""
+    column and staff accounts, the approval deadline column (CR-C08), and screenings when the schedule runs out."""
     conn = connect()
     try:
         exists = conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'movies'").fetchone()
@@ -40,6 +40,7 @@ async def lifespan(_app: FastAPI):
         reset_db()
     else:
         add_roles()
+        add_pending_until()
         top_up_screenings()
     yield
 

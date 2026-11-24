@@ -23,7 +23,8 @@ from cinema.lifecycle import Command, Forbidden, Refused, ReservationFacts, Tran
 from cinema.roles import Role
 from cinema.seed import iso
 
-HOLD = timedelta(minutes=15)
+HOLD = timedelta(minutes=15)  # how long a DRAFT holds its seats (OP-01)
+APPROVAL_LIMIT = timedelta(minutes=30)  # CR-C08 (v0.4): how long a PENDING_APPROVAL request may wait (OP-05)
 
 
 class ReservationError(Exception):
@@ -84,6 +85,7 @@ def _facts(db, reservation: dict) -> ReservationFacts:
         hold_until=reservation["hold_until"],
         starts_at=_screening(db, reservation["screening_id"])["starts_at"],
         needs_approval=needs_approval(db, reservation["id"]),
+        pending_until=reservation["pending_until"],
     )
 
 
@@ -128,9 +130,14 @@ def _change_state(db, reservation_id: int, transition: Transition, at: str) -> N
     if not db.in_transaction:
         raise RuntimeError("Reservation state may only change inside write_tx")
     state, column = transition.target, transition.timestamp_column
-    extra = f", {column} = ?" if column else ""
-    params = (state, at, reservation_id) if column else (state, reservation_id)
-    db.execute(f"UPDATE reservations SET state = ?{extra} WHERE id = ?", params)
+    sets, params = ["state = ?"], [state]
+    if column:
+        sets.append(f"{column} = ?")
+        params.append(at)
+    if state == "PENDING_APPROVAL":  # CR-C08: the approval clock starts when the request starts waiting
+        sets.append("pending_until = ?")
+        params.append(iso(datetime.fromisoformat(at) + APPROVAL_LIMIT))
+    db.execute(f"UPDATE reservations SET {', '.join(sets)} WHERE id = ?", (*params, reservation_id))
     db.execute("UPDATE reservation_seats SET state = ? WHERE reservation_id = ?", (state, reservation_id))
 
 

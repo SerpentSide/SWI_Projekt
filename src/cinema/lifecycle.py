@@ -29,6 +29,7 @@ class ReservationFacts:
     hold_until: str
     starts_at: str
     needs_approval: bool
+    pending_until: str | None = None  # CR-C08: approval deadline of a PENDING_APPROVAL reservation
 
 
 @dataclass(frozen=True)
@@ -71,10 +72,17 @@ TRANSITIONS: dict[Command, Rule] = {
 
 
 def effective_state(facts: ReservationFacts, at: str) -> str:
-    """R1: the state as everyone sees it. Expiry is derived, never stored (ADR-003)."""
+    """R1: the state as everyone sees it. Expiry is derived, never stored (ADR-003).
+
+    A PENDING_APPROVAL reservation expires when the screening starts (v0.2) or when its approval deadline
+    `pending_until` is reached (CR-C08, v0.4), whichever comes first. Both bounds are half-open like the DRAFT
+    hold: at exactly `pending_until` it is already EXPIRED. A pending row without a deadline (written before
+    v0.4) is treated as expired - fail-closed, so a request of unknown age is never confirmed."""
     if facts.stored_state == "DRAFT" and facts.hold_until <= at:
         return "EXPIRED"
-    if facts.stored_state == "PENDING_APPROVAL" and facts.starts_at <= at:
+    if facts.stored_state == "PENDING_APPROVAL" and (
+        facts.starts_at <= at or facts.pending_until is None or facts.pending_until <= at
+    ):
         return "EXPIRED"
     return facts.stored_state
 

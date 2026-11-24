@@ -66,7 +66,10 @@ CREATE TABLE reservations (
     hold_until   TEXT    NOT NULL,
     created_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     confirmed_at TEXT,
-    cancelled_at TEXT
+    cancelled_at TEXT,
+    -- CR-C08 (v0.4): approval deadline, written when the reservation enters PENDING_APPROVAL
+    -- (= that instant + 30 min). From this instant on the request reads EXPIRED. NULL otherwise.
+    pending_until TEXT
 );
 
 -- One row per seat held by a reservation. A reservation may hold several seats.
