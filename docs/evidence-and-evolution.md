@@ -663,8 +663,15 @@ Config: `CINEMA_DB` (path of the SQLite file, optional); no secrets exist.
 dependencies, all backend tests with JUnit report, `npm ci` + `npm run build`). Run by the author on a
 **fresh clone of `5984d13`** on 2026-11-24 (Linux, Python 3.13.18): exit 0, 108 passed, frontend built —
 [log](evidence/c09/check-clean-clone-5984d13.log). GitHub Actions workflow `.github/workflows/ci.yml` runs the
-same script on every push and PR. **CI: NOT RUN yet** — the branch has to be pushed to GitHub first; record
-the run URL and its result here after the first run.
+same script on every push and PR. **First CI run (GitHub Actions, ubuntu-latest, Python 3.13), 2026-11-24:
+FAIL — 1 failed, 107 passed.** `TC-C09-07` failed with `sqlite3.OperationalError: error in table reservations
+after drop column: incomplete input`. Cause: the test builds a "before" database with `ALTER TABLE reservations
+DROP COLUMN pending_until`, and the runner's SQLite (older than the 3.53.1 used locally) cannot rewrite the
+table definition when a `--` comment line stands directly before the dropped column. Reproduced locally with
+SQLite 3.51.1 (`pysqlite3-binary`); the product code was not affected (a real old database never drops the
+column). Fix: the column comment in `schema.sql` moved above `CREATE TABLE reservations`; with it the drop works
+on 3.51.1 and the suite gives 108 passed. A finding of the CI run, not of the change itself: our local runs
+used one SQLite version only. _Record the URL and result of the re-run here._
 
 **Independent reproducer, steps, actual result and any hidden fix:** _PLACEHOLDER — NOT DONE YET. A second
 team member (not the author) clones the repository into a new directory, checks out `c89` (or the merge

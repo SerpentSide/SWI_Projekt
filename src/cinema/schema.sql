@@ -57,6 +57,10 @@ CREATE TABLE screenings (
     CHECK (ends_at > starts_at)
 );
 
+-- pending_until (CR-C08, v0.4): approval deadline, written when the reservation enters PENDING_APPROVAL
+-- (= that instant + 30 min). From this instant on the request reads EXPIRED. NULL otherwise.
+-- The comment stays above the table: a comment line right before a column makes SQLite < 3.53
+-- fail on ALTER TABLE ... DROP COLUMN of that column ("incomplete input").
 CREATE TABLE reservations (
     id           INTEGER PRIMARY KEY,
     user_id      INTEGER NOT NULL REFERENCES users (id),
@@ -67,8 +71,6 @@ CREATE TABLE reservations (
     created_at   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     confirmed_at TEXT,
     cancelled_at TEXT,
-    -- CR-C08 (v0.4): approval deadline, written when the reservation enters PENDING_APPROVAL
-    -- (= that instant + 30 min). From this instant on the request reads EXPIRED. NULL otherwise.
     pending_until TEXT
 );
 
